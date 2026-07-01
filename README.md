@@ -1,4 +1,4 @@
-# QuerySure - Trust-First AI Analytics for Natural Language SQL
+# QuerySure - Trust First AI Analytics for Natural Language SQL
 
 QuerySure is a natural-language-to-SQL analytics pipeline that validates generated SQL before execution, scores result reliability, and turns trusted query output into business insights. It is built for retail analytics, but the architecture is general enough to adapt to other relational datasets.
 
@@ -28,8 +28,6 @@ Ask a plain-English business question and QuerySure returns validated SQL, a saf
 - **Output:** validated SQL → risk score → reliability score → business insight summary
 
 ## Demo Visuals 
-
-<img width="1470" height="956" alt="Screenshot 2026-07-01 at 11 19 06 PM" src="https://github.com/user-attachments/assets/134de89c-7ebe-4812-81f1-a1a64195999a" />
 
 <img width="1470" height="956" alt="Screenshot 2026-07-01 at 11 25 40 PM" src="https://github.com/user-attachments/assets/1f26674d-c8cc-4c75-b031-6710794e16f3" />
 
