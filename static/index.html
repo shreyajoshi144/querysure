@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>QuerySure | AI Analytics You Can Trust</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #07090f;
+  --bg1: #0d1118;
+  --bg2: #111722;
+  --bg3: #161d2b;
+  --border: rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.12);
+  --text: #e8edf8;
+  --text2: #8c9ab5;
+  --text3: #5a6a85;
+  --blue: #3b82f6;
+  --blue-dim: rgba(59,130,246,0.12);
+  --blue-border: rgba(59,130,246,0.28);
+  --green: #10b981;
+  --green-dim: rgba(16,185,129,0.1);
+  --green-border: rgba(16,185,129,0.25);
+  --amber: #f59e0b;
+  --amber-dim: rgba(245,158,11,0.1);
+  --amber-border: rgba(245,158,11,0.25);
+  --red: #ef4444;
+  --red-dim: rgba(239,68,68,0.1);
+  --red-border: rgba(239,68,68,0.25);
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'Inter', system-ui, sans-serif;
+  --r: 12px;
+  --r-sm: 8px;
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100dvh; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+pre { margin: 0; white-space: pre-wrap; word-break: break-all; }
+
+/* Layout */
+.app { display: grid; grid-template-columns: 280px 1fr 320px; grid-template-rows: 56px 1fr; min-height: 100dvh; }
+.topbar { grid-column: 1 / -1; display: flex; align-items: center; padding: 0 20px; gap: 12px; border-bottom: 1px solid var(--border); background: var(--bg1); }
+.sidebar { grid-row: 2; border-right: 1px solid var(--border); background: var(--bg1); overflow-y: auto; display: flex; flex-direction: column; gap: 0; }
+.main { grid-row: 2; overflow-y: auto; display: flex; flex-direction: column; }
+.panel { grid-row: 2; border-left: 1px solid var(--border); background: var(--bg1); overflow-y: auto; display: flex; flex-direction: column; }
+
+/* Topbar */
+.logo { width: 28px; height: 28px; border-radius: 8px; background: var(--blue-dim); border: 1px solid var(--blue-border); display: grid; place-items: center; }
+.logo svg { width: 14px; height: 14px; fill: var(--blue); }
+.brand-name { font-weight: 700; font-size: 15px; letter-spacing: -0.03em; }
+.brand-sub { font-size: 11px; color: var(--text3); background: var(--bg3); border: 1px solid var(--border); padding: 2px 8px; border-radius: 999px; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.session-badge { font-family: var(--mono); font-size: 11px; color: var(--text3); background: var(--bg2); border: 1px solid var(--border); padding: 3px 10px; border-radius: 6px; }
+.status-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg2); color: var(--text2); }
+.led { width: 7px; height: 7px; border-radius: 50%; background: var(--red); transition: background 0.3s, box-shadow 0.3s; }
+.led.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.btn-ghost { padding: 5px 12px; border-radius: var(--r-sm); border: 1px solid var(--border); color: var(--text2); font-size: 12px; transition: background 0.15s, border-color 0.15s; }
+.btn-ghost:hover { background: var(--bg3); border-color: var(--border2); color: var(--text); }
+
+/* Sidebar sections */
+.s-section { border-bottom: 1px solid var(--border); padding: 16px; }
+.s-title { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text3); margin: 0 0 12px; }
+.connect-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.btn-connect { padding: 8px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--bg2); color: var(--text2); font-size: 12px; transition: all 0.15s; text-align: center; }
+.btn-connect:hover { background: var(--bg3); border-color: var(--border2); color: var(--text); }
+.btn-connect.primary { background: var(--blue-dim); border-color: var(--blue-border); color: #93c5fd; }
+.btn-connect.primary:hover { background: rgba(59,130,246,0.2); }
+.btn-connect-full { width: 100%; margin-top: 6px; padding: 8px; border-radius: var(--r-sm); border: 1px dashed var(--border2); background: var(--bg2); color: var(--text2); font-size: 12px; }
+.btn-connect-full:hover { border-color: var(--blue-border); color: var(--text); }
+.api-input { width: 100%; padding: 7px 10px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; font-family: var(--mono); margin-top: 4px; }
+.api-input:focus { outline: none; border-color: var(--blue-border); }
+.db-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.db-stat { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; }
+.db-stat .sv { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+.db-stat .sl { font-size: 10px; color: var(--text3); margin-top: 1px; }
+
+/* Pipeline */
+.pipe-list { display: flex; flex-direction: column; gap: 3px; }
+.pipe-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--r-sm); border: 1px solid transparent; background: transparent; transition: all 0.25s; }
+.pipe-item.active { background: var(--blue-dim); border-color: var(--blue-border); }
+.pipe-item.done { background: var(--green-dim); border-color: var(--green-border); }
+.pipe-item.error { background: var(--red-dim); border-color: var(--red-border); }
+.pipe-dot { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--text3); transition: all 0.25s; }
+.pipe-item.active .pipe-dot { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+.pipe-item.done .pipe-dot { background: var(--green); }
+.pipe-item.error .pipe-dot { background: var(--red); }
+.pipe-name { font-size: 12px; color: var(--text2); flex: 1; }
+.pipe-item.active .pipe-name { color: #93c5fd; }
+.pipe-item.done .pipe-name { color: #6ee7b7; }
+.pipe-status { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+.pipe-item.active .pipe-status { color: #60a5fa; }
+.pipe-item.done .pipe-status { color: #34d399; }
+
+/* Main area */
+.question-area { padding: 20px 24px; border-bottom: 1px solid var(--border); }
+.q-row { display: flex; gap: 10px; align-items: flex-end; }
+.q-wrap { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 14px; display: flex; gap: 8px; align-items: flex-start; }
+.q-wrap:focus-within { border-color: var(--blue-border); }
+.q-icon { color: var(--text3); margin-top: 2px; flex-shrink: 0; }
+.q-textarea { flex: 1; background: transparent; border: none; outline: none; resize: none; font-size: 14px; color: var(--text); line-height: 1.5; min-height: 44px; max-height: 120px; }
+.q-textarea::placeholder { color: var(--text3); }
+.btn-run { padding: 10px 20px; border-radius: var(--r-sm); background: var(--blue); color: #fff; font-size: 13px; font-weight: 600; transition: background 0.15s, transform 0.1s; flex-shrink: 0; height: fit-content; }
+.btn-run:hover { background: #2563eb; }
+.btn-run:active { transform: scale(0.97); }
+.btn-run:disabled { opacity: 0.5; cursor: not-allowed; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.chip { padding: 4px 10px; border-radius: 999px; background: var(--bg3); border: 1px solid var(--border); font-size: 11px; color: var(--text3); cursor: pointer; transition: all 0.15s; }
+.chip:hover { border-color: var(--blue-border); color: #93c5fd; background: var(--blue-dim); }
+
+/* KPI strip */
+.kpi-strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+.kpi-cell { padding: 12px 16px; background: var(--bg1); }
+.kpi-cell .kl { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.06em; }
+.kpi-cell .kv { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; color: var(--text); }
+.kpi-cell .kb { height: 2px; background: var(--bg3); border-radius: 999px; margin-top: 6px; overflow: hidden; }
+.kpi-cell .kbf { height: 100%; background: var(--blue); border-radius: 999px; width: 0; transition: width 0.6s cubic-bezier(0.16,1,0.3,1); }
+
+/* Results tabs */
+.tab-row { display: flex; gap: 0; border-bottom: 1px solid var(--border); padding: 0 20px; background: var(--bg1); }
+.tab { padding: 10px 14px; font-size: 12px; color: var(--text3); border-bottom: 2px solid transparent; cursor: pointer; transition: all 0.15s; margin-bottom: -1px; }
+.tab:hover { color: var(--text2); }
+.tab.active { color: var(--text); border-bottom-color: var(--blue); }
+
+/* Tab panels */
+.tab-panel { display: none; padding: 20px 24px; flex: 1; }
+.tab-panel.active { display: block; }
+
+/* SQL card */
+.code-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; }
+.code-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--bg3); }
+.code-lang { font-size: 11px; font-family: var(--mono); color: var(--text3); }
+.code-actions { display: flex; gap: 6px; }
+.code-btn { padding: 3px 8px; border-radius: 5px; border: 1px solid var(--border); font-size: 11px; color: var(--text3); }
+.code-btn:hover { background: var(--bg3); color: var(--text); }
+.code-body { padding: 14px; font-family: var(--mono); font-size: 12px; line-height: 1.7; color: #c9deff; max-height: 300px; overflow: auto; }
+
+/* Tags */
+.tag { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; font-size: 11px; border: 1px solid; }
+.tag-good { background: var(--green-dim); border-color: var(--green-border); color: #6ee7b7; }
+.tag-warn { background: var(--amber-dim); border-color: var(--amber-border); color: #fcd34d; }
+.tag-bad { background: var(--red-dim); border-color: var(--red-border); color: #fca5a5; }
+.tag-blue { background: var(--blue-dim); border-color: var(--blue-border); color: #93c5fd; }
+.tag-neutral { background: var(--bg3); border-color: var(--border); color: var(--text2); }
+
+/* Table */
+.tbl-wrap { border: 1px solid var(--border); border-radius: var(--r); overflow: auto; max-height: 400px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { position: sticky; top: 0; background: var(--bg3); color: var(--text2); font-weight: 600; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); z-index: 1; }
+td { padding: 7px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: rgba(255,255,255,0.02); }
+
+/* Empty state */
+.empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; gap: 12px; text-align: center; color: var(--text3); flex: 1; }
+.empty-icon { width: 44px; height: 44px; border-radius: 12px; background: var(--bg3); border: 1px solid var(--border); display: grid; place-items: center; color: var(--text3); font-size: 20px; }
+.empty h3 { margin: 0; font-size: 14px; color: var(--text2); font-weight: 500; }
+.empty p { margin: 0; font-size: 12px; max-width: 280px; line-height: 1.5; }
+
+/* Right panel */
+.rp-section { padding: 16px; border-bottom: 1px solid var(--border); }
+.rp-title { font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text3); margin: 0 0 12px; }
+.exec-note { font-size: 12px; line-height: 1.6; color: var(--text2); background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 12px; }
+
+/* Reliability ring */
+.rel-hero { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.rel-ring { position: relative; width: 72px; height: 72px; flex-shrink: 0; }
+.rel-ring svg { transform: rotate(-90deg); }
+.rel-ring-num { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rel-info .rl { font-size: 16px; font-weight: 700; }
+.rel-info .rs { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.rel-checks { display: flex; flex-direction: column; gap: 4px; }
+.rel-check { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-sm); background: var(--bg2); border: 1px solid var(--border); }
+.rel-check .rc-name { flex: 1; font-size: 11px; color: var(--text2); }
+.rel-check .rc-score { font-size: 11px; font-family: var(--mono); font-weight: 600; }
+.rel-check .rc-tag { font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid; font-weight: 600; }
+
+/* Bullet lists */
+.bullet-list { display: flex; flex-direction: column; gap: 5px; }
+.bullet-item { display: flex; gap: 8px; padding: 7px 10px; border-radius: var(--r-sm); background: var(--bg2); border: 1px solid var(--border); font-size: 12px; line-height: 1.5; color: var(--text2); }
+.bullet-icon { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; margin-top: 1px; font-size: 10px; }
+.bullet-item.finding .bullet-icon { color: var(--blue); }
+.bullet-item.anomaly { border-color: var(--amber-border); }
+.bullet-item.anomaly .bullet-icon { color: var(--amber); }
+.bullet-item.reco .bullet-icon { color: var(--green); }
+
+/* Validation card */
+.val-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.val-row:last-child { border-bottom: none; }
+.val-label { color: var(--text2); }
+.val-val { font-family: var(--mono); color: var(--text); }
+
+/* Chart area */
+.chart-area { margin-top: 16px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; display: none; }
+.chart-area.visible { display: block; }
+.chart-title { font-size: 11px; color: var(--text3); margin-bottom: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 120px; }
+.bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.bar-fill { width: 100%; background: linear-gradient(180deg, var(--blue), rgba(59,130,246,0.5)); border-radius: 4px 4px 0 0; min-height: 4px; transition: height 0.5s cubic-bezier(0.16,1,0.3,1); position: relative; }
+.bar-fill:hover::after { content: attr(data-val); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: 10px; background: var(--bg3); border: 1px solid var(--border); padding: 2px 6px; border-radius: 4px; color: var(--text); margin-bottom: 4px; }
+.bar-label { font-size: 9px; color: var(--text3); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+
+/* Report section */
+.report-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn-dl { padding: 7px 12px; border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--bg2); font-size: 12px; color: var(--text2); display: flex; align-items: center; gap: 6px; }
+.btn-dl:hover { background: var(--bg3); border-color: var(--border2); color: var(--text); }
+.btn-dl svg { width: 13px; height: 13px; opacity: 0.7; }
+
+/* Explanation box */
+.expl-box { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px; font-size: 12px; line-height: 1.6; color: var(--text2); margin-bottom: 12px; }
+
+/* Progress animation */
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+.pulsing { animation: pulse 1.5s infinite; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border2); }
+
+/* Upload hover */
+#fileInput { display: none; }
+.upload-label { display: block; cursor: pointer; }
+
+/* Summary bar */
+.summary-strip { display: none; align-items: center; gap: 4px; padding: 8px 20px; background: var(--green-dim); border-bottom: 1px solid var(--green-border); font-size: 11px; color: #6ee7b7; }
+.summary-strip.visible { display: flex; }
+.summary-strip strong { font-weight: 600; }
+
+/* Intro flow steps */
+.intro-steps { display: flex; flex-direction: column; gap: 6px; }
+.intro-step { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--r-sm); background: var(--bg2); border: 1px solid var(--border); font-size: 12px; color: var(--text2); }
+.intro-num { width: 18px; height: 18px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--border); display: grid; place-items: center; font-size: 10px; font-weight: 700; color: var(--text3); flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+<!-- TOPBAR -->
+<header class="topbar">
+  <div class="logo">
+    <svg viewBox="0 0 16 16"><path d="M8 1L2 4v8l6 3 6-3V4L8 1zm0 2l4 2v6l-4 2-4-2V5l4-2z" opacity="0.6"/><circle cx="8" cy="8" r="2"/></svg>
+  </div>
+  <span class="brand-name">QuerySure</span>
+  <span class="brand-sub">Ask Your Data. Trust Every Answer.</span>
+  <div class="topbar-right">
+    <span class="status-pill">
+      <span class="led" id="statusLed"></span>
+      <span id="statusText">Disconnected</span>
+    </span>
+    <span class="session-badge">Session: <span id="sessionBadge">—</span></span>
+    <button class="btn-ghost" id="newSessionBtn">New Session</button>
+    <button class="btn-ghost" id="disconnectBtn">Reset</button>
+  </div>
+</header>
+
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <!-- Connect -->
+  <div class="s-section">
+    <p class="s-title">Database</p>
+    <div class="connect-grid">
+      <button class="btn-connect primary" id="sampleBtn">Sample DB</button>
+      <label class="upload-label">
+        <div class="btn-connect">Upload .db / .csv</div>
+        <input type="file" id="fileInput" accept=".db,.sqlite,.sqlite3,.csv">
+      </label>
+    </div>
+    <div class="db-stats" id="dbStats" style="display:none">
+      <div class="db-stat"><div class="sv" id="dbTables">—</div><div class="sl">Tables</div></div>
+      <div class="db-stat"><div class="sv" id="dbRows">—</div><div class="sl">Rows</div></div>
+      <div class="db-stat"><div class="sv" id="dbHealth">—</div><div class="sl">Health</div></div>
+      <div class="db-stat"><div class="sv" id="dbSize">—</div><div class="sl">Size</div></div>
+    </div>
+  </div>
+
+  <!-- API Key -->
+  <div class="s-section">
+    <p class="s-title">Groq API Key</p>
+    <input class="api-input" type="password" id="apiKey" placeholder="gsk_…  (or set in .env)">
+  </div>
+
+  <!-- Pipeline -->
+  <div class="s-section" style="flex:1">
+    <p class="s-title">Pipeline <span id="pipelineState" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3);margin-left:4px">—</span></p>
+    <div class="pipe-list" id="pipeList">
+      <div class="pipe-item" data-step="connect"><div class="pipe-dot"></div><span class="pipe-name">Connect</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="schema"><div class="pipe-dot"></div><span class="pipe-name">Schema Intelligence</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="semantic"><div class="pipe-dot"></div><span class="pipe-name">Semantic Layer</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="retrieval"><div class="pipe-dot"></div><span class="pipe-name">Vector Retrieval</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="sql"><div class="pipe-dot"></div><span class="pipe-name">SQL Generation</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="validation"><div class="pipe-dot"></div><span class="pipe-name">SQL Validation</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="execution"><div class="pipe-dot"></div><span class="pipe-name">Execution</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="reliability"><div class="pipe-dot"></div><span class="pipe-name">Reliability Check</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="insights"><div class="pipe-dot"></div><span class="pipe-name">Business Insights</span><span class="pipe-status">Pending</span></div>
+      <div class="pipe-item" data-step="report"><div class="pipe-dot"></div><span class="pipe-name">Report Generation</span><span class="pipe-status">Pending</span></div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+  <!-- Question -->
+  <div class="question-area">
+    <div class="q-row">
+      <div class="q-wrap">
+        <div class="q-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        </div>
+        <textarea class="q-textarea" id="question" placeholder="What insight are you looking for? e.g. What is total revenue by product category this year?" rows="2"></textarea>
+      </div>
+      <button class="btn-run" id="analyzeBtn">Analyze</button>
+    </div>
+    <div class="chips">
+      <span class="chip" data-q="What is total revenue by product category?">Revenue by category</span>
+      <span class="chip" data-q="Show me the top 10 customers by order value">Top customers</span>
+      <span class="chip" data-q="Which store region has the highest sales volume?">Sales by region</span>
+      <span class="chip" data-q="What is the monthly order trend for the past year?">Monthly trends</span>
+      <span class="chip" data-q="Which products have the most returned orders?">Return analysis</span>
+    </div>
+  </div>
+
+  <!-- Summary strip -->
+  <div class="summary-strip" id="summaryStrip">
+    <span>Pipeline complete —</span>
+    <span id="sumDetail"></span>
+  </div>
+
+  <!-- KPI strip -->
+  <div class="kpi-strip">
+    <div class="kpi-cell"><div class="kl">SQL Confidence</div><div class="kv" id="kpiConfidence">—</div><div class="kb"><div class="kbf" id="kpiConfBar"></div></div></div>
+    <div class="kpi-cell"><div class="kl">Rows Returned</div><div class="kv" id="kpiRows">—</div><div class="kb"><div class="kbf" id="kpiRowsBar"></div></div></div>
+    <div class="kpi-cell"><div class="kl">Latency</div><div class="kv" id="kpiExec">—</div><div class="kb"><div class="kbf" id="kpiExecBar"></div></div></div>
+    <div class="kpi-cell"><div class="kl">Reliability</div><div class="kv" id="kpiReliability">—</div><div class="kb"><div class="kbf" id="kpiRelBar"></div></div></div>
+    <div class="kpi-cell"><div class="kl">Report</div><div class="kv" id="kpiReport">—</div><div class="kb"><div class="kbf" id="kpiReportBar"></div></div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tab-row">
+    <div class="tab active" data-tab="query">Query &amp; Results</div>
+    <div class="tab" data-tab="sql">SQL</div>
+    <div class="tab" data-tab="validation">Validation</div>
+    <div class="tab" data-tab="retrieval">Retrieval</div>
+    <div class="tab" data-tab="raw">Raw Output</div>
+  </div>
+
+  <!-- Query tab -->
+  <div class="tab-panel active" id="tab-query">
+    <div id="emptyState">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:16px;padding:48px 24px;text-align:center;color:var(--text3)">
+        <div class="empty-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h18v18H3zM3 9h18M9 9v12"/></svg>
+        </div>
+        <div>
+          <h3 style="margin:0 0 6px;font-size:14px;color:var(--text2);font-weight:500">Ready to analyze</h3>
+          <p style="margin:0;font-size:12px;max-width:280px;line-height:1.6">Connect a database, enter a business question, and click <strong>Run Analysis</strong> to run the full pipeline.</p>
+        </div>
+        <div class="intro-steps">
+          <div class="intro-step"><div class="intro-num">1</div>Connect a database using Sample DB or upload your own</div>
+          <div class="intro-step"><div class="intro-num">2</div>Enter your Groq API key (or set GROQ_API_KEY in .env)</div>
+          <div class="intro-step"><div class="intro-num">3</div>Type a business question and run the full pipeline</div>
+        </div>
+      </div>
+    </div>
+    <div id="resultsState" style="display:none">
+      <div id="chartArea" class="chart-area">
+        <div class="chart-title">Top Results</div>
+        <div class="bar-chart" id="barChart"></div>
+        <div class="bar-chart" id="barLabels" style="align-items:flex-start;margin-top:4px;height:auto"></div>
+      </div>
+      <div class="tbl-wrap" style="margin-top:16px">
+        <table id="resultsTable"><thead></thead><tbody><tr><td style="color:var(--text3);padding:20px;text-align:center">No results yet</td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SQL tab -->
+  <div class="tab-panel" id="tab-sql">
+    <div class="expl-box" id="sqlExplanation" style="display:none"></div>
+    <div id="sqlMetaTags" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+    <div class="code-card">
+      <div class="code-header">
+        <span class="code-lang">SQLite · Generated</span>
+        <div class="code-actions">
+          <button class="code-btn" id="copySqlBtn">Copy SQL</button>
+        </div>
+      </div>
+      <div class="code-body"><pre id="sqlOut" style="color:var(--text3)">No SQL generated yet. Run the pipeline first.</pre></div>
+    </div>
+  </div>
+
+  <!-- Validation tab -->
+  <div class="tab-panel" id="tab-validation">
+    <div id="valContent">
+      <p style="color:var(--text3);font-size:12px">Run the pipeline to see validation results.</p>
+    </div>
+  </div>
+
+  <!-- Retrieval tab -->
+  <div class="tab-panel" id="tab-retrieval">
+    <div id="retrievalContent">
+      <p style="color:var(--text3);font-size:12px">Run the pipeline to see retrieval context.</p>
+    </div>
+  </div>
+
+  <!-- Raw tab -->
+  <div class="tab-panel" id="tab-raw">
+    <div class="code-card">
+      <div class="code-header"><span class="code-lang">JSON Response</span></div>
+      <div class="code-body" style="max-height:600px"><pre id="rawOut" style="color:var(--text3)">No response yet.</pre></div>
+    </div>
+  </div>
+</main>
+
+<!-- RIGHT PANEL -->
+<aside class="panel">
+  <!-- Summary -->
+  <div class="rp-section">
+    <p class="rp-title">Executive Summary</p>
+    <div class="exec-note" id="execNote">Run an analysis to see the executive summary here.</div>
+  </div>
+
+  <!-- Reliability -->
+  <div class="rp-section">
+    <p class="rp-title">Data Reliability</p>
+    <div class="rel-hero">
+      <div class="rel-ring">
+        <svg width="72" height="72" viewBox="0 0 72 72">
+          <circle cx="36" cy="36" r="28" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="8"/>
+          <circle id="relArc" cx="36" cy="36" r="28" fill="none" stroke="var(--green)" stroke-width="8" stroke-linecap="round" stroke-dasharray="175.9" stroke-dashoffset="175.9" style="transition:stroke-dashoffset 0.7s cubic-bezier(0.16,1,0.3,1)"/>
+        </svg>
+        <div class="rel-ring-num" id="relScore">—</div>
+      </div>
+      <div class="rel-info">
+        <div class="rl" id="relLevel">No data</div>
+        <div class="rs" id="relStatus">Run the pipeline</div>
+      </div>
+    </div>
+    <div class="rel-checks" id="relChecks">
+      <div style="font-size:11px;color:var(--text3)">Reliability checks will appear after analysis.</div>
+    </div>
+  </div>
+
+  <!-- Key Findings -->
+  <div class="rp-section">
+    <p class="rp-title">Key Findings</p>
+    <div class="bullet-list" id="findingsList">
+      <div class="bullet-item"><span class="bullet-icon">◦</span><span>No findings yet.</span></div>
+    </div>
+  </div>
+
+  <!-- Anomalies -->
+  <div class="rp-section">
+    <p class="rp-title">Anomalies</p>
+    <div class="bullet-list" id="anomaliesList">
+      <div class="bullet-item"><span class="bullet-icon">◦</span><span>No anomalies detected.</span></div>
+    </div>
+  </div>
+
+  <!-- Recommendations -->
+  <div class="rp-section">
+    <p class="rp-title">Recommendations</p>
+    <div class="bullet-list" id="recoList">
+      <div class="bullet-item"><span class="bullet-icon">◦</span><span>No recommendations yet.</span></div>
+    </div>
+  </div>
+
+  <!-- Report actions -->
+  <div class="rp-section">
+    <p class="rp-title">Export</p>
+    <div class="report-actions">
+      <button class="btn-dl" id="downloadCsvBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>CSV
+      </button>
+      <button class="btn-dl" id="downloadJsonBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>JSON
+      </button>
+      <button class="btn-dl" id="downloadReportBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>Report
+      </button>
+    </div>
+  </div>
+</aside>
+
+</div><!-- end .app -->
+
+<script>
+const STEPS = ['connect','schema','semantic','retrieval','sql','validation','execution','reliability','insights','report'];
+let sessionId = '';
+let lastRows = [];
+let lastReport = null;
+let currentSql = '';
+
+const $ = id => document.getElementById(id);
+
+function pretty(obj) { return JSON.stringify(obj, null, 2); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function clamp(v, lo=0, hi=100) { return Math.max(lo, Math.min(hi, v)); }
+function pctStr(v) {
+  if (v === null || v === undefined || v === '—') return '—';
+  if (typeof v === 'string') {
+    if (v === 'High') return 'High';
+    if (v === 'Medium') return 'Medium';
+    if (v === 'Low') return 'Low';
+    const n = parseFloat(v);
+    return isNaN(n) ? v : Math.round(n) + '%';
+  }
+  if (typeof v === 'number') return Math.round(v) + '%';
+  return '—';
+}
+function numFmt(n) {
+  if (n === null || n === undefined) return '—';
+  const parsed = typeof n === 'number' ? n : parseInt(n, 10);
+  if (isNaN(parsed)) return '—';
+  return parsed >= 1000 ? (parsed/1000).toFixed(1)+'K' : String(parsed);
+}
+
+async function post(url, body) {
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  return r.json();
+}
+async function postForm(url, fd) {
+  const r = await fetch(url, {method:'POST', body: fd});
+  return r.json();
+}
+
+function setStatus(text, ok) {
+  $('statusText').textContent = text;
+  const led = $('statusLed');
+  led.classList.toggle('on', ok);
+}
+
+function setPipelineState(label) {
+  $('pipelineState').textContent = label;
+}
+
+function markStep(step, state='active') {
+  document.querySelectorAll('.pipe-item').forEach(el => {
+    const s = el.dataset.step;
+    const si = STEPS.indexOf(s), ci = STEPS.indexOf(step);
+    const isDone = si < ci || (state === 'done' && s === step);
+    const isActive = state === 'active' && s === step;
+    const isError = state === 'error' && s === step;
+    el.classList.toggle('done', isDone);
+    el.classList.toggle('active', isActive);
+    el.classList.toggle('error', isError);
+    const st = el.querySelector('.pipe-status');
+    if (isActive) st.textContent = 'Running…';
+    else if (isDone) st.textContent = 'Done';
+    else if (isError) st.textContent = 'Error';
+    else st.textContent = 'Pending';
+  });
+}
+
+function finishTo(step) {
+  document.querySelectorAll('.pipe-item').forEach(el => {
+    const s = el.dataset.step;
+    if (STEPS.indexOf(s) <= STEPS.indexOf(step)) {
+      el.classList.add('done'); el.classList.remove('active','error');
+      el.querySelector('.pipe-status').textContent = 'Done';
+    }
+  });
+}
+
+function setBar(id, val) { $(id).style.width = clamp(val) + '%'; }
+
+function renderTable(rows) {
+  lastRows = rows || [];
+  const table = $('resultsTable'), thead = table.querySelector('thead'), tbody = table.querySelector('tbody');
+  thead.innerHTML = ''; tbody.innerHTML = '';
+  if (!rows || !rows.length) {
+    tbody.innerHTML = '<tr><td colspan="99" style="padding:24px;text-align:center;color:var(--text3)">No rows returned</td></tr>';
+    return;
+  }
+  const keys = Object.keys(rows[0]);
+  thead.innerHTML = '<tr>' + keys.map(k => `<th>${k}</th>`).join('') + '</tr>';
+  tbody.innerHTML = rows.slice(0, 200).map(r => '<tr>' + keys.map(k => {
+    const v = r[k] ?? '';
+    return `<td>${typeof v === 'number' ? v.toLocaleString() : v}</td>`;
+  }).join('') + '</tr>').join('');
+  $('emptyState').style.display = 'none';
+  $('resultsState').style.display = 'block';
+}
+
+function renderChart(rows) {
+  if (!rows || rows.length < 2) return;
+  const cols = Object.keys(rows[0]);
+  const numCol = cols.find(c => typeof rows[0][c] === 'number');
+  const labelCol = cols.find(c => typeof rows[0][c] === 'string');
+  if (!numCol) return;
+  const top = rows.slice(0, 10);
+  const vals = top.map(r => r[numCol]);
+  const maxVal = Math.max(...vals);
+  const bars = $('barChart'), labels = $('barLabels');
+  bars.innerHTML = ''; labels.innerHTML = '';
+  top.forEach((r, i) => {
+    const pct = maxVal ? Math.max(6, Math.round((vals[i] / maxVal) * 100)) : 6;
+    const b = document.createElement('div'); b.className = 'bar-col';
+    const bf = document.createElement('div'); bf.className = 'bar-fill';
+    bf.style.height = pct + '%'; bf.setAttribute('data-val', typeof vals[i] === 'number' ? vals[i].toLocaleString() : vals[i]);
+    const lv = document.createElement('div'); lv.className = 'bar-fill';
+    lv.style.cssText = 'display:none';
+    b.appendChild(bf); bars.appendChild(b);
+    const lb = document.createElement('div'); lb.className = 'bar-col';
+    const lt = document.createElement('div'); lt.className = 'bar-label';
+    lt.textContent = labelCol ? String(r[labelCol]).slice(0,10) : String(i+1);
+    lb.appendChild(lt); labels.appendChild(lb);
+  });
+  $('chartArea').classList.add('visible');
+}
+
+function renderReliabilityChecks(rel) {
+  const checks = [
+    { name: 'Completeness', key: 'completeness' },
+    { name: 'Freshness', key: 'freshness' },
+    { name: 'Integrity', key: 'integrity' },
+    { name: 'Drift', key: 'drift' },
+    { name: 'Uniqueness', key: 'uniqueness' },
+  ];
+  const html = checks.map(c => {
+    const data = rel[c.key] || {};
+    const score = data.score ?? '?';
+    const status = data.status || '?';
+    const tagClass = status === 'PASS' ? 'tag-good' : status === 'WARNING' ? 'tag-warn' : 'tag-bad';
+    return `<div class="rel-check">
+      <span class="rc-name">${c.name}</span>
+      <span class="rc-score" style="color:${status==='PASS'?'var(--green)':status==='WARNING'?'var(--amber)':'var(--red)'}">${score}/100</span>
+      <span class="rc-tag ${tagClass}">${status}</span>
+    </div>`;
+  }).join('');
+  $('relChecks').innerHTML = html;
+}
+
+function renderBulletList(id, items, cls, icon) {
+  const el = $(id);
+  if (!items || !items.length) {
+    el.innerHTML = `<div class="bullet-item"><span class="bullet-icon" style="color:var(--text3)">◦</span><span style="color:var(--text3)">None detected.</span></div>`;
+    return;
+  }
+  el.innerHTML = items.map(x => `<div class="bullet-item ${cls}"><span class="bullet-icon">${icon}</span><span>${x}</span></div>`).join('');
+}
+
+function renderValidationTab(v) {
+  const issues = v.issues || [];
+  const warnings = v.warnings || [];
+  let html = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+    <span class="tag ${v.is_valid ? 'tag-good' : 'tag-bad'}">${v.is_valid ? '✓ Valid' : '✗ Invalid'}</span>
+    <span class="tag tag-neutral">Score: ${v.validation_score ?? '—'}/100</span>
+    <span class="tag ${v.risk_score > 20 ? 'tag-bad' : 'tag-good'}">Risk: ${v.risk_score ?? '—'}</span>
+    <span class="tag tag-neutral">Hallucination: ${((v.hallucination_score||0)*100).toFixed(0)}%</span>
+    <span class="tag ${v.fanout_risk==='High'?'tag-bad':v.fanout_risk==='Medium'?'tag-warn':'tag-good'}">Fan-out: ${v.fanout_risk||'Low'}</span>
+    <span class="tag ${v.join_validation?.valid ? 'tag-good' : 'tag-bad'}">Joins: ${v.join_validation?.valid ? 'OK' : 'Issues'}</span>
+    <span class="tag ${v.aggregation_validation?.valid ? 'tag-good' : 'tag-warn'}">Aggregation: ${v.aggregation_validation?.valid ? 'OK' : 'Review'}</span>
+  </div>`;
+  if (issues.length) {
+    html += `<div style="margin-bottom:12px"><div style="font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Issues</div>`;
+    html += issues.map(i => `<div class="bullet-item anomaly" style="margin-bottom:4px"><span class="bullet-icon">!</span><span><strong>${i.type}:</strong> ${i.message}</span></div>`).join('');
+    html += '</div>';
+  }
+  if (warnings.length) {
+    html += `<div><div style="font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Warnings</div>`;
+    html += warnings.map(w => `<div class="bullet-item" style="margin-bottom:4px"><span class="bullet-icon" style="color:var(--amber)">△</span><span>${w}</span></div>`).join('');
+    html += '</div>';
+  }
+  $('valContent').innerHTML = html;
+}
+
+function renderRetrievalTab(r) {
+  const tables = r.top_tables || [];
+  const joinHints = r.join_hints || [];
+  let html = `<div style="margin-bottom:14px">
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Retrieved Tables (${tables.length})</div>`;
+  html += tables.map(t => `<div class="rel-check" style="margin-bottom:4px">
+    <span class="rc-name">${t.table} <span style="color:var(--text3)">${t.business_name !== t.table ? '· '+t.business_name : ''}</span></span>
+    <span class="rc-score" style="color:var(--blue)">${Math.round(t.score*100)}%</span>
+    <span class="tag tag-blue" style="font-size:9px">${t.table_type}</span>
+  </div>`).join('');
+  html += '</div>';
+  if (joinHints.length) {
+    html += `<div><div style="font-size:11px;color:var(--text3);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Join Hints</div>`;
+    html += joinHints.slice(0,6).map(j => `<div class="bullet-item" style="margin-bottom:4px"><span class="bullet-icon" style="color:var(--blue);font-size:9px">→</span><span style="font-family:var(--mono);font-size:11px">${j}</span></div>`).join('');
+    html += '</div>';
+  }
+  $('retrievalContent').innerHTML = html;
+}
+
+function csvFromRows(rows) {
+  if (!rows.length) return '';
+  const keys = Object.keys(rows[0]);
+  return [keys.join(',')].concat(rows.map(r => keys.map(k => JSON.stringify(r[k] ?? '')).join(','))).join('\n');
+}
+function download(name, text, type='text/plain') {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], {type})); a.download = name; a.click();
+}
+
+// Tabs
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    $('tab-' + t.dataset.tab).classList.add('active');
+  };
+});
+
+// Chips
+document.querySelectorAll('.chip').forEach(c => {
+  c.onclick = () => { $('question').value = c.dataset.q; };
+});
+
+// Copy SQL
+$('copySqlBtn').onclick = () => {
+  if (currentSql) navigator.clipboard.writeText(currentSql).then(() => { $('copySqlBtn').textContent = 'Copied!'; setTimeout(() => $('copySqlBtn').textContent = 'Copy SQL', 1500); });
+};
+
+async function newSession() {
+  const res = await post('/api/session', {});
+  if (res.success) { sessionId = res.session_id; $('sessionBadge').textContent = sessionId.slice(0,8); }
+}
+
+async function connectSample() {
+  markStep('connect','active'); setPipelineState('Connecting…');
+  const res = await post('/api/connect/sample', {session_id: sessionId});
+  if (!res.success) { markStep('connect','error'); return alert('Error: ' + res.error); }
+  setStatus('Connected · ' + res.db_name, true);
+  $('dbTables').textContent = res.table_count; $('dbRows').textContent = numFmt(res.total_rows);
+  $('dbHealth').textContent = res.health_score ? res.health_score + '%' : '—'; $('dbSize').textContent = res.db_size || '—';
+  $('dbStats').style.display = 'grid';
+  $('rawOut').textContent = pretty(res); finishTo('connect'); setPipelineState('Connected');
+}
+
+async function uploadFile(file) {
+  markStep('connect','active'); setPipelineState('Uploading…');
+  const fd = new FormData(); fd.append('file', file); fd.append('session_id', sessionId);
+  const res = await postForm('/api/connect/upload', fd);
+  if (!res.success) { markStep('connect','error'); return alert('Error: ' + res.error); }
+  setStatus('Connected · ' + res.db_name, true);
+  $('dbTables').textContent = res.table_count; $('dbRows').textContent = numFmt(res.total_rows);
+  $('dbHealth').textContent = res.health_score ? res.health_score + '%' : '—'; $('dbSize').textContent = res.db_size || '—';
+  $('dbStats').style.display = 'grid';
+  $('rawOut').textContent = pretty(res); finishTo('connect'); setPipelineState('Connected');
+}
+
+async function runAll() {
+  const q = $('question').value.trim();
+  if (!q) { alert('Enter a business question first.'); return; }
+  const apiKey = $('apiKey').value.trim();
+  $('analyzeBtn').disabled = true;
+  $('summaryStrip').classList.remove('visible');
+  try {
+    // Auto-connect if not connected
+    if ($('statusText').textContent === 'Disconnected') {
+      await connectSample();
+      await sleep(200);
+    }
+
+    // Schema
+    markStep('schema','active'); setPipelineState('Schema…');
+    const schema = await post('/api/schema-intelligence', {session_id: sessionId});
+    if (!schema.success) throw new Error(schema.error);
+    $('rawOut').textContent = pretty(schema); finishTo('schema'); await sleep(150);
+
+    // Semantic
+    markStep('semantic','active'); setPipelineState('Semantic layer…');
+    const semantic = await post('/api/semantic-layer', {session_id: sessionId});
+    if (!semantic.success) throw new Error(semantic.error);
+    $('rawOut').textContent = pretty(semantic); finishTo('semantic'); await sleep(150);
+
+    // Retrieval
+    markStep('retrieval','active'); setPipelineState('Vector retrieval…');
+    const retrieval = await post('/api/retrieve-tables', {session_id: sessionId, question: q});
+    if (!retrieval.success) throw new Error(retrieval.error);
+    renderRetrievalTab(retrieval);
+    $('rawOut').textContent = pretty(retrieval); finishTo('retrieval'); await sleep(150);
+
+    // SQL Generation
+    markStep('sql','active'); setPipelineState('Generating SQL…');
+    const sqlRes = await post('/api/generate-sql', {session_id: sessionId, question: q, api_key: apiKey});
+    if (!sqlRes.success) throw new Error(sqlRes.error);
+    currentSql = sqlRes.sql || '';
+    $('sqlOut').textContent = currentSql || '-- No SQL generated';
+    $('sqlOut').style.color = currentSql ? '#c9deff' : 'var(--text3)';
+    const expl = sqlRes.explanation || '';
+    if (expl) { $('sqlExplanation').textContent = expl; $('sqlExplanation').style.display = 'block'; }
+    else { $('sqlExplanation').style.display = 'none'; }
+    const conf = sqlRes.confidence || 'Medium';
+    const confNum = conf === 'High' ? 90 : conf === 'Low' ? 30 : 60;
+    $('kpiConfidence').textContent = conf;
+    setBar('kpiConfBar', confNum);
+    $('sqlMetaTags').innerHTML = [
+      `<span class="tag ${conf==='High'?'tag-good':conf==='Low'?'tag-bad':'tag-warn'}">${conf} Confidence</span>`,
+      `<span class="tag tag-neutral">${sqlRes.complexity || 'Moderate'}</span>`,
+      sqlRes.tables_used?.length ? `<span class="tag tag-blue">${sqlRes.tables_used.length} Tables</span>` : '',
+      sqlRes.retrieval_confidence != null ? `<span class="tag tag-neutral">Retrieval: ${Math.round(sqlRes.retrieval_confidence*100)}%</span>` : '',
+    ].filter(Boolean).join('');
+    $('rawOut').textContent = pretty(sqlRes); finishTo('sql'); await sleep(150);
+
+    // Validation
+    markStep('validation','active'); setPipelineState('Validating SQL…');
+    const validation = await post('/api/validate-sql', {session_id: sessionId, sql: currentSql});
+    if (!validation.success) throw new Error(validation.error);
+    renderValidationTab(validation);
+    $('rawOut').textContent = pretty(validation); finishTo('validation');
+    if (!validation.is_valid) throw new Error('SQL validation failed: ' + (validation.issues||[]).map(i=>i.message).join('; '));
+    await sleep(150);
+
+    // Execution
+    markStep('execution','active'); setPipelineState('Executing query…');
+    const execution = await post('/api/execute-sql', {session_id: sessionId, sql: currentSql});
+    if (!execution.success) throw new Error(execution.error);
+    const rows = execution.rows || [];
+    renderTable(rows);
+    renderChart(rows);
+    const rowCount = execution.row_count ?? rows.length;
+    const execMs = execution.execution_metadata?.execution_time_ms ?? 0;
+    $('kpiRows').textContent = numFmt(rowCount);
+    $('kpiExec').textContent = execMs + 'ms';
+    setBar('kpiRowsBar', Math.min(100, rowCount / 2));
+    setBar('kpiExecBar', Math.max(10, 100 - Math.min(execMs/30, 90)));
+    $('rawOut').textContent = pretty(execution); finishTo('execution'); await sleep(150);
+
+    // Reliability
+    markStep('reliability','active'); setPipelineState('Reliability check…');
+    const reliability = await post('/api/analyze-reliability', {session_id: sessionId});
+    if (!reliability.success) throw new Error(reliability.error);
+    const relScore = reliability.reliability_score ?? 0;
+    const relLevel = reliability.reliability_level || (relScore >= 90 ? 'High' : relScore >= 75 ? 'Medium' : 'Low');
+    const relStatus = reliability.status || '';
+    $('relScore').textContent = relScore;
+    $('relLevel').textContent = relLevel + ' Reliability';
+    $('relStatus').textContent = relStatus;
+    const circumference = 175.9;
+    const offset = circumference - (relScore / 100 * circumference);
+    $('relArc').style.strokeDashoffset = offset;
+    $('relArc').style.stroke = relScore >= 90 ? 'var(--green)' : relScore >= 75 ? 'var(--amber)' : 'var(--red)';
+    renderReliabilityChecks(reliability);
+    $('kpiReliability').textContent = relScore + '%';
+    setBar('kpiRelBar', relScore);
+    $('rawOut').textContent = pretty(reliability); finishTo('reliability'); await sleep(150);
+
+    // Insights
+    markStep('insights','active'); setPipelineState('Generating insights…');
+    const insights = await post('/api/generate-insights', {session_id: sessionId});
+    if (!insights.success) throw new Error(insights.error);
+    // Map actual API response fields: summary, key_findings[], anomalies[], recommendations[], executive_note
+    const summary = insights.summary || '';
+    const execNote = insights.executive_note || summary || 'Analysis complete.';
+    $('execNote').textContent = execNote;
+    renderBulletList('findingsList', insights.key_findings || [], 'finding', '◆');
+    renderBulletList('anomaliesList', insights.anomalies || [], 'anomaly', '▲');
+    renderBulletList('recoList', insights.recommendations || [], 'reco', '→');
+    $('rawOut').textContent = pretty(insights); finishTo('insights'); await sleep(150);
+
+    // Report
+    markStep('report','active'); setPipelineState('Generating report…');
+    const report = await post('/api/generate-report', {session_id: sessionId});
+    if (!report.success) throw new Error(report.error);
+    lastReport = report;
+    $('kpiReport').textContent = 'Ready';
+    setBar('kpiReportBar', 100);
+    $('rawOut').textContent = pretty(report); finishTo('report'); setPipelineState('Complete');
+
+    // Summary strip
+    $('sumDetail').innerHTML = `<strong>${numFmt(rowCount)} rows</strong> &nbsp;·&nbsp; Reliability <strong>${relScore}%</strong> &nbsp;·&nbsp; Confidence <strong>${conf}</strong> &nbsp;·&nbsp; ${(insights.key_findings||[]).length} findings`;
+    $('summaryStrip').classList.add('visible');
+
+  } catch (e) {
+    setPipelineState('Error');
+    $('rawOut').textContent = 'Error: ' + (e.message || e);
+  } finally {
+    $('analyzeBtn').disabled = false;
+  }
+}
+
+$('sampleBtn').onclick = connectSample;
+$('fileInput').onchange = e => e.target.files[0] && uploadFile(e.target.files[0]);
+$('newSessionBtn').onclick = newSession;
+$('analyzeBtn').onclick = runAll;
+$('disconnectBtn').onclick = () => location.reload();
+$('downloadCsvBtn').onclick = () => download('datasense-results.csv', csvFromRows(lastRows), 'text/csv');
+$('downloadJsonBtn').onclick = () => download('datasense-results.json', JSON.stringify(lastRows, null, 2), 'application/json');
+$('downloadReportBtn').onclick = () => { if (lastReport) download('datasense-report.json', JSON.stringify(lastReport.payload || lastReport, null, 2), 'application/json'); else alert('Run a full pipeline first.'); };
+
+newSession();
+</script>
+</body>
+</html>

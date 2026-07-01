@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Database (keep sample DB if needed)
+*.sqlite-shm
+*.sqlite-wal
+
+# Output Reports
+output/
+reports/
+exports/
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Temporary Files
+temp/
+tmp/
+
+# Chroma / Vector DB (if added later)
+vector_db/
+
+# Uploaded Files
+uploads/
+
+# Build
+dist/
+build/
