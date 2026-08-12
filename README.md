@@ -14,13 +14,10 @@ Most "ask your database" tools treat the LLM as the final authority. QuerySure t
 
 That makes the system more useful for analytics workflows where a wrong join or hallucinated column can produce a very confident, very wrong answer.
 
-<img width="1470" height="956" alt="Screenshot 2026-07-01 at 11 19 06 PM" src="https://github.com/user-attachments/assets/cc77b89b-d0e3-4189-8d36-7a1dccdf25c7" />
 
 ## What it does
 
 Ask a plain-English business question and QuerySure returns validated SQL, a safety and reliability report, and a business insight summary — all traceable back to the schema context used to generate the answer.
-
-<img width="1635" height="962" alt="querysure" src="https://github.com/user-attachments/assets/bd1df429-3dc1-4d8a-80c7-078b494f8b21" />
 
 **Example**
 
@@ -28,15 +25,8 @@ Ask a plain-English business question and QuerySure returns validated SQL, a saf
 - **Output:** validated SQL → risk score → reliability score → business insight summary
 
 ## Demo Visuals 
-
-<img width="1470" height="956" alt="Screenshot 2026-07-01 at 11 25 40 PM" src="https://github.com/user-attachments/assets/1f26674d-c8cc-4c75-b031-6710794e16f3" />
-
-<img width="1470" height="956" alt="Screenshot 2026-07-01 at 11 20 43 PM" src="https://github.com/user-attachments/assets/f45c620d-621f-4391-bdbe-7bb282575178" />
-
-<img width="1470" height="956" alt="Screenshot 2026-07-01 at 11 21 38 PM" src="https://github.com/user-attachments/assets/4c900197-5c9c-40f5-bff5-6f90ebb8788e" />
-
- <img width="1470" height="956" alt="Screenshot 2026-07-01 at 11 22 00 PM" src="https://github.com/user-attachments/assets/7e0d6383-c9d6-49a4-bd76-8aeed6cc2ee8" />
-
+<img width="1470" height="956" alt="Screenshot 2026-08-12 at 11 03 06 PM" src="https://github.com/user-attachments/assets/006b5c4d-b835-4ad9-aef6-f38e1db0ef71" />
+<img width="1470" height="956" alt="Screenshot 2026-08-12 at 11 03 44 PM" src="https://github.com/user-attachments/assets/f09072b0-fcbb-4387-beef-02357581f18f" />
 ## Core modules
 
 | Module | Responsibility |
