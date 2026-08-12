@@ -86,10 +86,6 @@ QuerySure is designed to reject bad SQL early.
 
 That separation matters because valid SQL is not the same as trustworthy output.
 
-## Failure cases
-
-A query can be rejected before execution if it refers to a table or column that does not exist in the schema, uses an invalid join relationship, or includes a suspicious SQL pattern. In those cases, the system returns a validation failure instead of silently producing a misleading answer.
-
 Common rejection reasons include:
 
 - Invalid table or column reference
@@ -131,11 +127,7 @@ querysure/
 - TF-IDF retrieval
 - CSS custom properties
 
-## Known limitations
+## Failure cases
 
-- SQL validation is regex-based, not a full AST parser.
-- The app is session-scoped and in-memory.
-- There is no multi-user authentication layer.
-- There is no fallback provider if the LLM API is unavailable.
-- Freshness and drift scoring use heuristics rather than learned baselines.
+A query can be rejected before execution if it refers to a table or column that does not exist in the schema, uses an invalid join relationship, or includes a suspicious SQL pattern. In those cases, the system returns a validation failure instead of silently producing a misleading answer.
 
