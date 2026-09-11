@@ -1,89 +1,78 @@
-
 # QuerySure
 
-### Trust-first natural language analytics for structured data and documents
+## Natural-language analytics for structured data and documents
 
-QuerySure is a full-stack analytics system that lets users ask questions about uploaded data in natural language.
+QuerySure is a full-stack analytics application that allows users to work with uploaded datasets and documents through natural-language questions.
 
-The project handles two different kinds of sources:
+The application handles two different source types:
 
-* **Structured data** such as CSV, Excel, JSON, Parquet, and SQLite
-* **Documents** such as PDF and DOCX
+* **Structured data** — CSV, Excel, JSON, Parquet, and SQLite
+* **Documents** — PDF and DOCX
 
-These sources do not go through the same pipeline. Structured datasets are profiled and prepared for analytical querying, while documents go through extraction and retrieval. Both paths eventually produce an answer with the relevant analytical context or supporting evidence.
+These sources follow different processing paths. Structured data is profiled and converted into analytical context before querying, while documents are extracted, chunked, and retrieved as supporting evidence.
 
-A key part of QuerySure is that generated SQL is **not executed immediately**. Analytical operations pass through validation before execution, and the result can be assessed for reliability before being returned.
+For structured data, generated SQL is not executed immediately. Queries pass through a validation stage before execution, allowing analytical operations to be checked before they interact with the uploaded data.
 
-> The project started with retail analytics as a primary use case, but the data-processing architecture is not tied to a single retail schema.
-
----
-
-## What problem does QuerySure solve?
-
-Exploring a new dataset usually requires a combination of tasks:
-
-* Understanding the schema
-* Checking data quality
-* Identifying relationships between tables
-* Writing SQL
-* Verifying whether the query is safe
-* Interpreting the result
-
-Documents introduce a different problem: finding the relevant information before answering the question.
-
-QuerySure separates these concerns instead of treating every uploaded file as the same type of source.
-
-```mermaid
-flowchart TD
-    U[User] --> Q[Natural-language question]
-
-    U --> F[Upload file]
-
-    F --> R{Source type}
-
-    R -->|CSV / Excel / JSON / Parquet / SQLite| SD[Structured data pipeline]
-    R -->|PDF / DOCX| DP[Document pipeline]
-
-    SD --> AE[Analytical engine]
-    DP --> RE[Retrieval engine]
-
-    Q --> E[QuerySure engine]
-
-    E --> AE
-    E --> RE
-
-    AE --> ANS[Answer engine]
-    RE --> ANS
-
-    ANS --> OUT[Answer with results and context]
-```
+> The project was initially developed around retail analytics use cases, but the ingestion and analysis flow is designed around dataset structure rather than a single fixed schema.
 
 ---
 
-## Demo Visuals 
-<img width="1470" height="956" alt="Screenshot 2026-08-12 at 11 03 06 PM" src="https://github.com/user-attachments/assets/006b5c4d-b835-4ad9-aef6-f38e1db0ef71" />
-<img width="1470" height="956" alt="Screenshot 2026-08-12 at 11 03 44 PM" src="https://github.com/user-attachments/assets/f09072b0-fcbb-4387-beef-02357581f18f" />
+## What QuerySure does
 
-# Core Capabilities
+A user can upload a dataset or document and ask questions about its contents.
 
-## Natural-Language Analysis
-
-Users can ask analytical questions without manually writing SQL.
-
-Examples include:
+For example:
 
 * What were the highest-selling products last quarter?
 * Which region generated the most revenue?
 * How did revenue change month over month?
 * Which customers contributed the highest percentage of sales?
-* Show the top five categories by growth.
-* Compare this year's performance with last year.
+* Show the top categories by growth.
+* What does this document say about a particular topic?
 
-For structured data questions, QuerySure uses dataset context and schema information to determine the required analysis.
+The application routes the request according to the uploaded source type.
+
+## Demo Visuals
+
+<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 20 23 AM" src="https://github.com/user-attachments/assets/e5129fe0-4e7a-4b4e-a8bc-d3be3b8c3cdc" />
+<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 20 28 AM" src="https://github.com/user-attachments/assets/977ab958-7a5c-4e18-ab61-cb8aa4eeaffe" />
+<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 21 18 AM" src="https://github.com/user-attachments/assets/f8726153-73eb-43f5-bd96-75afc833e446" />
+<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 21 59 AM" src="https://github.com/user-attachments/assets/84257a89-dc3e-4f60-afbb-335a1046aa44" />
+
+
+```mermaid
+flowchart TD
+
+    U[User] --> F[Upload Source]
+    U --> Q[Natural-Language Question]
+
+    F --> R{Source Type}
+
+    R -->|CSV / Excel / JSON / Parquet / SQLite| SD[Structured Data Pipeline]
+    R -->|PDF / DOCX| DP[Document Pipeline]
+
+    Q --> E[QuerySure Request Layer]
+
+    E --> SD
+    E --> DP
+
+    SD --> A[Analytical Result]
+    DP --> D[Retrieved Evidence]
+
+    A --> O[Answer]
+    D --> O
+
+    O --> OUT[Result with Context]
+```
+
+The core design decision is that a spreadsheet and a document are not treated as the same kind of source.
 
 ---
 
-## Structured Data Support
+
+# Structured Data Pipeline
+
+Structured data follows a format-aware ingestion path.
 
 QuerySure supports:
 
@@ -93,37 +82,39 @@ QuerySure supports:
 * Parquet
 * SQLite databases
 
-The ingestion flow is format-aware rather than assuming every file can be processed identically.
+Rather than assuming all uploaded files have the same structure, each format is routed through its appropriate ingestion process before being normalized into analytical context.
 
 ```mermaid
 flowchart TD
-    A[Uploaded file] --> B[Format router]
 
-    B --> C1[CSV ingestion]
-    B --> C2[Excel ingestion]
-    B --> C3[JSON ingestion]
-    B --> C4[Parquet ingestion]
-    B --> C5[SQLite ingestion]
+    A[Uploaded Dataset]
+        --> B{Format Router}
 
-    C1 --> D[Validation and normalization]
+    B --> C1[CSV Ingestion]
+    B --> C2[Excel Ingestion]
+    B --> C3[JSON Ingestion]
+    B --> C4[Parquet Ingestion]
+    B --> C5[SQLite Ingestion]
+
+    C1 --> D[Validate and Normalize]
     C2 --> D
     C3 --> D
     C4 --> D
     C5 --> D
 
-    D --> E[Dataset profiling]
-    E --> F[Schema discovery]
-    F --> G[Standardized dataset context]
-    G --> H[Query and analysis engine]
+    D --> E[Dataset Profiling]
+    E --> F[Schema Discovery]
+    F --> G[Dataset Context]
+    G --> H[Analytical Query Pipeline]
 ```
 
 ---
 
-# Dataset Profiling
+## Dataset Profiling
 
-Before analytical questions are processed, QuerySure builds context about the uploaded dataset.
+Before generating an analytical operation, QuerySure builds a profile of the uploaded dataset.
 
-The profiling layer examines:
+The profiling stage examines information such as:
 
 * Row and column counts
 * Inferred data types
@@ -135,13 +126,15 @@ The profiling layer examines:
 * Potential primary keys
 * Data-quality warnings
 
-This gives the analysis layer information about the dataset before analytical operations are generated.
+This information becomes part of the context available to the analytical layer.
+
+The system therefore does not rely only on the user's question when determining what the available data represents.
 
 ---
 
-# Schema Discovery and Relationship Inference
+## Schema Discovery and Relationship Inference
 
-When a dataset contains multiple tables or sheets, QuerySure examines the available structure to identify potential relationships.
+When an uploaded source contains multiple tables or sheets, QuerySure examines their structure to identify potential relationships.
 
 For example:
 
@@ -152,7 +145,7 @@ sales.customer_id
 customers.customer_id
 ```
 
-Relationship inference considers:
+Relationship inference can consider:
 
 * Column names
 * Data types
@@ -160,15 +153,17 @@ Relationship inference considers:
 * Value overlap
 * Existing database foreign keys
 
-Relationships are associated with confidence information rather than assuming that two similarly named columns are automatically related.
+Potential relationships can carry confidence information rather than being assumed solely because two columns have similar names.
 
-This is important when working with uploaded data because schemas may be incomplete, inconsistent, or lack explicitly defined foreign keys.
+This is particularly relevant for uploaded datasets, where schemas may be incomplete or foreign-key relationships may not be explicitly defined.
 
 ---
 
-# Query Intelligence
+# Natural-Language Analytics
 
-Depending on the user's question, QuerySure can work with analytical operations such as:
+For structured data questions, QuerySure uses the available dataset and schema context to determine the required analysis.
+
+The analytical layer can work with operations including:
 
 * Filtering
 * Aggregation
@@ -189,125 +184,200 @@ Depending on the user's question, QuerySure can work with analytical operations 
 * Trend analysis
 * Segmentation
 
-The generated operation does not bypass validation.
+Generated SQL is treated as an intermediate step rather than the final action.
 
 ---
 
-# SQL Validation and Execution Flow
+# SQL Generation, Validation, and Execution
 
-The structured-data path follows a controlled execution flow.
+The structured-data path separates SQL generation from SQL execution.
 
 ```mermaid
 flowchart TD
-    A[Natural-language question] --> B[Retrieve dataset and schema context]
 
-    B --> C[Generate analytical plan]
+    A[Natural-Language Question]
+        --> B[Retrieve Dataset and Schema Context]
+
+    B --> C[Generate Analytical Plan]
     C --> D[Generate SQL]
 
-    D --> E[SQL validation]
+    D --> E[SQL Validation]
 
-    E --> F{Validation passed?}
+    E --> F{Validation Passed?}
 
-    F -->|No| G[Reject or return validation feedback]
+    F -->|No| G[Reject Query or Return Validation Feedback]
 
-    F -->|Yes| H[Execute query]
+    F -->|Yes| H[Execute Query]
 
-    H --> I[Analyze result]
-    I --> J[Assess result reliability]
+    H --> I[Analyze Query Result]
+    I --> J[Assess Result Reliability]
 
-    J --> K[Generate answer]
-    K --> L[Return results and analytical context]
+    J --> K[Generate Answer]
+    K --> L[Return Result and Analytical Context]
 ```
 
-The validation layer is intended to help prevent:
+The validation stage is intended to check generated SQL before execution.
+
+The checks include patterns related to:
 
 * Multi-statement execution
 * Destructive operations
 * Unauthorized table access
-* Unsafe query patterns
+* Unsafe query structures
+
+This keeps query validation separate from SQL generation rather than assuming generated SQL is automatically safe to execute.
 
 ---
 
-# Document Intelligence
+# Document Pipeline
 
-Documents use a separate pipeline because document analysis is not the same problem as generating SQL over structured datasets.
+Documents follow a different path because document analysis does not require the same operations as structured analytics.
 
 QuerySure currently supports:
 
 * PDF
 * DOCX
 
-The document flow is:
-
 ```mermaid
 flowchart TD
-    A[Document upload] --> B[Text and table extraction]
 
-    B --> C[Normalization]
-    C --> D[Chunking]
-    D --> E[Retrieval]
+    A[Document Upload]
+        --> B[Text and Table Extraction]
 
-    E --> F[Evidence selection]
-    F --> G[Answer generation]
+    B --> C[Normalize Content]
+    C --> D[Chunk Content]
+    D --> E[Retrieve Relevant Content]
 
-    G --> H[Answer with relevant evidence]
+    E --> F[Select Supporting Evidence]
+    F --> G[Generate Answer]
+
+    G --> H[Answer with Evidence Context]
 ```
 
-Where possible, extracted tables are preserved as structured information instead of being treated only as plain text.
+Where possible, extracted tables can remain structured rather than being treated only as plain text.
+
+The document pipeline is therefore focused on locating and selecting relevant evidence before answer generation.
 
 ---
 
-# End-to-End Flow
+# End-to-End Request Flow
 
 ```mermaid
 sequenceDiagram
+
     participant U as User
     participant API as FastAPI API
     participant DE as Data Engine
-    participant Doc as Document Engine
-    participant DB as Metadata Database
-    participant AE as Answer Engine
+    participant DOC as Document Engine
+    participant DB as Application Database
+    participant ANS as Answer Layer
 
     U->>API: Upload dataset or document
-    API->>DB: Store metadata
+    API->>DB: Store source metadata
 
-    alt Structured data
-        API->>DE: Process uploaded dataset
-        DE->>DE: Validate, normalize and profile
+    alt Structured Data
+        API->>DE: Process dataset
+        DE->>DE: Validate and normalize
+        DE->>DE: Profile and discover schema
         DE->>DB: Store dataset metadata
     else Document
-        API->>Doc: Extract and process document
-        Doc->>Doc: Chunk and index content
+        API->>DOC: Extract document content
+        DOC->>DOC: Normalize and chunk content
     end
 
-    U->>API: Ask natural-language question
+    U->>API: Submit natural-language question
 
-    alt Structured data question
+    alt Structured Data Question
         API->>DE: Retrieve context and analyze
-        DE->>DE: Generate and validate SQL
-        DE-->>AE: Query results and context
-    else Document question
-        API->>Doc: Retrieve relevant evidence
-        Doc-->>AE: Retrieved evidence
+        DE->>DE: Generate SQL
+        DE->>DE: Validate SQL
+        DE->>DE: Execute validated query
+        DE-->>ANS: Query result and context
+    else Document Question
+        API->>DOC: Retrieve relevant evidence
+        DOC-->>ANS: Supporting content
     end
 
-    AE-->>API: Generate answer
-    API-->>U: Return answer
+    ANS-->>API: Generated answer
+    API-->>U: Result
 ```
+
+---
+
+# System Architecture
+
+```mermaid
+flowchart TB
+
+    U[User]
+
+    subgraph Frontend
+        FE[QuerySure Frontend]
+    end
+
+    subgraph Application["FastAPI Application"]
+        API[REST API]
+        AUTH[Authentication]
+        DATA[Structured Data Engine]
+        DOC[Document Engine]
+        ANSWER[Answer Layer]
+    end
+
+    subgraph DataLayer["Data and Storage"]
+        QUERY[DuckDB / SQLite Query Layer]
+        META[(PostgreSQL)]
+        REDIS[(Redis)]
+        STORE[Object Storage]
+    end
+
+    FE --> API
+    U --> FE
+
+    API --> AUTH
+    API --> DATA
+    API --> DOC
+
+    DATA --> QUERY
+    DATA --> ANSWER
+
+    DOC --> ANSWER
+
+    ANSWER --> META
+
+    API --> REDIS
+    API --> STORE
+
+    REDIS --> RL[Rate Limiting / Background Jobs]
+    STORE --> FILES[Uploaded Files]
+```
+
+### Component responsibilities
+
+| Component              | Responsibility                                                    |
+| ---------------------- | ----------------------------------------------------------------- |
+| Frontend               | File upload, question submission, and results interface           |
+| FastAPI                | API routes and application request handling                       |
+| Structured Data Engine | Ingestion, profiling, schema discovery, and analytical processing |
+| Document Engine        | Extraction, chunking, retrieval, and evidence selection           |
+| Query Layer            | Analytical query execution using DuckDB and SQLite                |
+| PostgreSQL             | Application metadata and persistent records                       |
+| Redis                  | Rate limiting and job-related infrastructure                      |
+| Object Storage         | Uploaded source files                                             |
+| Answer Layer           | Producing responses from analytical results or retrieved evidence |
 
 ---
 
 # Reliability and Safety
 
-QuerySure includes several layers around uploaded data and generated analytical operations.
+## SQL Validation
 
-## Query Validation
+Generated SQL passes through validation before execution.
 
-Generated SQL is checked before execution to help prevent unsafe operations.
+The validation layer is intended to prevent or reject unsafe patterns before they reach the query engine.
 
-The validation layer covers patterns such as:
+Checks cover areas such as:
 
-* Multi-statement queries
+* Multi-statement execution
 * Destructive operations
 * Unauthorized table access
 * Unsafe query structures
@@ -316,7 +386,9 @@ The validation layer covers patterns such as:
 
 ## File Validation
 
-Uploaded files are handled through controls including:
+Uploaded files are handled through validation and controlled processing.
+
+The application includes controls for:
 
 * File type validation
 * File size limits
@@ -333,92 +405,51 @@ The application includes:
 
 * User registration
 * Secure password hashing
-* JWT authentication
+* JWT-based authentication
 * Protected API routes
 
 ---
 
 ## Rate Limiting
 
-Redis-backed rate limiting is used to protect endpoints that may be sensitive or computationally expensive.
-
----
-
-# System Architecture
-
-```mermaid
-flowchart TB
-    U[Users]
-
-    U --> FE[QuerySure Frontend]
-    FE --> API[FastAPI API]
-
-    API --> AUTH[Authentication]
-    API --> DATA[Data Engine]
-    API --> DOC[Document Engine]
-
-    DATA --> QUERY[DuckDB / SQLite]
-    DOC --> RET[Retrieval Pipeline]
-
-    AUTH --> ANSWER[Answer Engine]
-    QUERY --> ANSWER
-    RET --> ANSWER
-
-    ANSWER --> META[(PostgreSQL Metadata)]
-
-    API --> REDIS[(Redis)]
-    API --> STORE[Object Storage]
-
-    REDIS --> RL[Rate limiting / Jobs]
-    STORE --> FILES[Uploaded files]
-```
+Redis-backed rate limiting is used for endpoints that may be sensitive or computationally expensive.
 
 ---
 
 # Technology Stack
 
-## Backend
-
-* Python
-* FastAPI
-* SQLAlchemy
-* Pydantic
-
-## Data Processing
-
-* Pandas
-* DuckDB
-* SQLite
-* PyArrow
-* OpenPyXL
-
-## AI and Retrieval
-
-* Large Language Models
-* Semantic retrieval
-* Vector-based context retrieval
-
-## Infrastructure
-
-* PostgreSQL
-* Redis
-* Alembic
-* Docker
-* Docker Compose
+| Layer                    | Technology                        | Usage                                  |
+| ------------------------ | --------------------------------- | -------------------------------------- |
+| Backend                  | Python + FastAPI                  | Application API and backend            |
+| Data Processing          | Pandas                            | Data loading and processing            |
+| Analytical Query Engine  | DuckDB                            | Analytical SQL execution               |
+| Local Database Support   | SQLite                            | Structured data and database ingestion |
+| Columnar Processing      | PyArrow                           | Parquet and columnar data handling     |
+| Excel Processing         | OpenPyXL                          | Excel ingestion                        |
+| ORM / Database Access    | SQLAlchemy                        | Application database access            |
+| Validation               | Pydantic                          | Request and data models                |
+| Application Database     | PostgreSQL                        | Persistent application metadata        |
+| Caching / Infrastructure | Redis                             | Rate limiting and job support          |
+| Migrations               | Alembic                           | Database schema migrations             |
+| Containers               | Docker + Docker Compose           | Local service orchestration            |
+| Retrieval                | Semantic / vector-based retrieval | Document context retrieval             |
 
 ---
 
-# Production and Operational Features
+# Operational Features
 
-The project includes infrastructure and operational components such as:
+The application includes infrastructure and operational components beyond the analysis pipeline.
+
+These include:
 
 * Dockerized services
 * PostgreSQL application database
 * Redis integration
-* Database migrations with Alembic
+* Alembic database migrations
 * Environment-based configuration
-* Fail-fast production configuration validation
-* Request IDs and structured logging
+* Fail-fast configuration validation
+* Request IDs
+* Structured logging
 * Health endpoints
 * Readiness checks
 * Rate limiting
@@ -428,19 +459,61 @@ The project includes infrastructure and operational components such as:
 
 ---
 
-# Health Checks
+# Health and Readiness
 
-The API exposes endpoints intended for application and deployment monitoring.
+The API exposes endpoints intended for application monitoring.
 
-### `GET /api/health`
+## `GET /api/health`
 
 Checks whether the application is running.
 
-### `GET /api/ready`
+## `GET /api/ready`
 
 Checks whether required runtime dependencies are ready.
 
-These endpoints can be used by deployment platforms or monitoring systems to distinguish between an application that is running and one that is actually ready to serve requests.
+The distinction is useful in deployment environments where a running application process is not necessarily ready to accept application traffic.
+
+---
+
+# Project Structure
+
+The repository is organized around the main processing responsibilities:
+
+```text
+querysure/
+│
+├── backend/
+│   ├── api/
+│   │   └── routes/
+│   │
+│   ├── services/
+│   │   ├── ingestion/
+│   │   ├── profiling/
+│   │   ├── schema/
+│   │   ├── sql/
+│   │   └── retrieval/
+│   │
+│   ├── validation/
+│   │   ├── sql_validator/
+│   │   └── file_validation/
+│   │
+│   ├── database/
+│   │   ├── models/
+│   │   ├── repositories/
+│   │   └── migrations/
+│   │
+│   ├── auth/
+│   └── core/
+│
+├── frontend/
+│
+├── tests/
+│
+├── docker-compose.yml
+├── Dockerfile
+├── requirements.txt
+└── .env.example
+```
 
 ---
 
@@ -455,11 +528,15 @@ cd querysure
 
 ## Configure environment variables
 
+Create a local environment file:
+
 ```bash
 cp .env.example .env
 ```
 
 Update the required values in `.env`.
+
+---
 
 ## Start the application
 
@@ -467,7 +544,7 @@ Update the required values in `.env`.
 docker compose up --build
 ```
 
-The Docker environment starts the QuerySure services, including:
+The Docker environment starts the services required by QuerySure, including:
 
 * QuerySure API
 * PostgreSQL
@@ -479,7 +556,7 @@ To stop the services:
 docker compose down
 ```
 
-To reset local containers and volumes:
+To remove local containers and volumes:
 
 ```bash
 docker compose down -v
@@ -503,112 +580,175 @@ alembic upgrade head
 
 ---
 
-# Design Decisions
+# Engineering Decisions
 
-## Structured data and documents are handled separately
+## Structured data and documents use separate pipelines
 
-A spreadsheet and a PDF do not have the same structure or require the same reasoning path.
+A dataset and a document require different processing strategies.
 
-QuerySure keeps these processing pipelines separate:
+For structured data, the relevant questions are:
 
-* Structured data is profiled, contextualized, queried, and validated.
-* Documents are extracted, chunked, retrieved, and evidence-selected.
+* What columns are available?
+* What data types are present?
+* Are there missing or duplicate values?
+* How are tables related?
+* What SQL operation is required?
 
-They share a common answer layer without forcing both source types through the same processing model.
+For documents, the relevant questions are different:
+
+* What content was extracted?
+* How should it be chunked?
+* Which sections are relevant to the question?
+* What evidence supports the answer?
+
+QuerySure keeps these pipelines separate and combines their outputs at the answer layer.
 
 ---
 
-## Generated SQL is treated as an operation that requires validation
+## SQL generation and execution are separate stages
 
-The natural-language interface does not directly execute generated SQL.
+The natural-language interface does not send generated SQL directly to the query engine.
 
-The intended flow is:
+The intended path is:
 
 ```text
-Question → Context → SQL generation → Validation → Execution → Result assessment → Answer
+Question
+    ↓
+Dataset Context
+    ↓
+Analytical Plan
+    ↓
+SQL Generation
+    ↓
+Validation
+    ↓
+Execution
+    ↓
+Result Assessment
+    ↓
+Answer
 ```
 
-This separation makes validation a distinct stage of the system rather than an afterthought.
+Validation is therefore part of the analytical workflow rather than a check added after query execution.
 
 ---
 
 ## Dataset context is built before analysis
 
-The system profiles datasets and examines schema information before analytical operations are generated.
+Before generating an analytical operation, QuerySure profiles the dataset and examines its schema.
 
-This provides context about:
+The available context can include:
 
-* Available columns
+* Columns
 * Data types
-* Data quality
+* Data-quality information
 * Potential relationships
 * Dataset structure
 
-The goal is to reduce the amount of schema information the analysis layer has to infer from the user's question alone.
+This reduces the amount of information the analytical layer needs to infer solely from the user's natural-language question.
+
+---
+
+## The source determines the processing path
+
+QuerySure does not force every uploaded source through an SQL pipeline or treat every source as unstructured text.
+
+```mermaid
+flowchart LR
+
+    S[Uploaded Source]
+
+    S --> T{Source Type}
+
+    T -->|Structured Data| A[Profile → Schema → SQL → Validation → Results]
+
+    T -->|Document| B[Extract → Chunk → Retrieve → Evidence → Answer]
+```
+
+This separation is one of the central architectural decisions in the project.
 
 ---
 
 # Use Cases
 
-QuerySure can be used for scenarios such as:
+## Business Analytics
 
-### Business Analytics
+Analyze sales, customers, revenue, and operational data using natural-language questions.
 
-Explore sales, customers, revenue, and operational performance.
+## Dataset Exploration
 
-### Dataset Exploration
+Inspect unfamiliar datasets without manually writing every exploratory SQL query.
 
-Understand unfamiliar datasets without manually inspecting every table or writing SQL for every question.
+## Analytical Reporting
 
-### Reporting
+Generate answers and analytical summaries from structured business data.
 
-Generate analytical summaries from structured business data.
+## Document Analysis
 
-### Internal Document Analysis
+Ask questions about uploaded reports and documents using retrieval and supporting evidence.
 
-Ask questions about uploaded reports and documents using retrieval and evidence selection.
+## Multi-Source Analysis
 
-### Multi-Source Data Exploration
-
-Work with information stored across spreadsheets, databases, analytical datasets, and documents.
+Work with structured datasets and documents inside the same application while preserving source-specific processing paths.
 
 ---
 
 # Project Scope
 
-QuerySure brings together several areas that are usually treated as separate problems:
+QuerySure brings together several areas that are often implemented separately:
 
-* Data ingestion
+* File ingestion
 * Dataset profiling
 * Schema discovery
 * Relationship inference
 * Natural-language analytics
 * SQL generation
 * SQL validation
-* Query execution
-* Document retrieval
+* Analytical query execution
+* Document extraction
+* Retrieval
 * Authentication
 * Rate limiting
-* Containerized infrastructure
+* Containerized services
 * Application monitoring
 
-The project is intended to demonstrate how these components can be connected into a single application rather than implemented as isolated scripts or notebooks.
+The project focuses on connecting these components into one application flow rather than presenting them as separate scripts or notebooks.
 
 ---
 
-## Future Expansion
+# Future Expansion
 
-The architecture leaves room for features such as:
+Potential areas for further development include:
 
-* Additional enterprise data connectors
-* More visualization options
+* Additional data connectors
+* Additional visualization options
 * Scheduled reporting
 * Collaborative workspaces
-* Enterprise identity providers
-* Advanced data governance
+* Enterprise authentication providers
+* Expanded governance controls
 * Additional document formats
-* Expanded analytical agents
+* Additional analytical workflows
 
 ---
 
-**QuerySure is an exploration of what a natural-language analytics system needs beyond SQL generation: understanding the source, validating the operation, and preserving enough context to make the result useful.**
+## Project Context
+
+QuerySure was built as a portfolio project to explore what sits around natural-language analytics beyond simply generating SQL.
+
+The project combines:
+
+* Understanding uploaded data
+* Building schema context
+* Generating analytical operations
+* Validating generated SQL
+* Processing documents separately from datasets
+* Retrieving relevant evidence
+* Returning answers with source-specific context
+
+The central design decision behind QuerySure is:
+
+> **Natural-language analytics is not only a SQL-generation problem. The system also needs to understand the source, determine the appropriate processing path, and validate operations before producing a result.**
+
+---
+
+Built by **Shreya Joshi**.
