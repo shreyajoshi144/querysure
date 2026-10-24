@@ -59,7 +59,43 @@ def _kpi_columns(query_result: dict, semantic: dict | None = None) -> List[str]:
     return list(dict.fromkeys(selected))
 
 
-def _top_contributor_analysis(rows: List[dict], dim_col: str, metric_col: str, top_n: int = 3) -> Dict[str, Any]:
+def _limited(sql: str | None) -> bool:
+    """True when the outermost query has a LIMIT/OFFSET, so the returned rows are only part of the groups."""
+    if not sql:
+        return False
+    try:
+        import sqlglot
+        tree = sqlglot.parse_one(sql, read="sqlite")
+    except Exception:  # noqa: BLE001 - unparseable: assume partial, so no share is claimed from the rows
+        return True
+    return bool(tree.args.get("limit") or tree.args.get("offset"))
+
+
+def _full_totals(sql: str, db_path: str | None, metrics: List[str]) -> Dict[str, float]:
+    """Totals of ``metrics`` over every row the query returns WITHOUT its LIMIT/OFFSET (same filters and grouping),
+    i.e. the denominator of a share of total. Empty when it cannot be computed; then no share is reported."""
+    if not (sql and db_path and metrics):
+        return {}
+    try:
+        import sqlglot
+        from .query_result_engine import execute_query
+        inner = sqlglot.parse_one(sql, read="sqlite")
+        for k in ("limit", "offset", "order"):
+            inner.set(k, None)
+        cols = ", ".join('SUM("{}")'.format(m.replace('"', '""')) for m in metrics)
+        res = execute_query(f"SELECT {cols} FROM ({inner.sql(dialect='sqlite')}) AS full_result", db_path)
+        if not res.get("success") or not res.get("rows"):
+            return {}
+        row = res["rows"][0]
+        vals = [row.get(c) for c in res.get("columns", [])]
+        return {m: float(v) for m, v in zip(metrics, vals) if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    except Exception:  # noqa: BLE001 - a missing denominator only removes the share finding
+        return {}
+
+
+def _top_contributor_analysis(rows: List[dict], dim_col: str, metric_col: str, top_n: int = 3,
+                              total: float | None = None) -> Dict[str, Any]:
+    """``total`` is the full-result denominator when the rows are a LIMITed subset; otherwise the rows' own sum."""
     agg = {}
     for r in rows:
         d = r.get(dim_col)
@@ -69,7 +105,7 @@ def _top_contributor_analysis(rows: List[dict], dim_col: str, metric_col: str, t
         agg[d] = agg.get(d, 0.0) + float(m)
     if not agg:
         return {"has_data": False}
-    total = sum(agg.values())
+    total = sum(agg.values()) if total is None else total
     ranked = sorted(agg.items(), key=lambda x: x[1], reverse=True)
     top = []
     for k, v in ranked[:top_n]:
@@ -98,6 +134,21 @@ def _trend_label(values: List[float]) -> Tuple[str, float]:
     return ("upward" if pct > 0 else "downward"), pct
 
 
+_NON_ADDITIVE_HINTS = ("pct", "percent", "rate", "ratio", "avg", "average", "mean", "margin", "growth",
+                       "price", "score", "rating", "median", "share", "discount")
+_TIME_HINTS = ("date", "month", "year", "week", "quarter", "day", "period", "time")
+
+
+def _is_additive_metric(name: str) -> bool:
+    """A 'share of total' is only meaningful for additive measures (sums/counts)."""
+    low = str(name).lower()
+    return not any(h in low for h in _NON_ADDITIVE_HINTS)
+
+
+def _has_time_axis(rows: List[dict], columns: List[str]) -> bool:
+    return any(any(h in str(c).lower() for h in _TIME_HINTS) for c in columns)
+
+
 def _outlier_detection(rows: List[dict], metric_col: str) -> List[Dict[str, Any]]:
     vals = [float(r[metric_col]) for r in rows if isinstance(r.get(metric_col), (int, float)) and not isinstance(r.get(metric_col), bool)]
     if len(vals) < 4:
@@ -115,8 +166,43 @@ def _outlier_detection(rows: List[dict], metric_col: str) -> List[Dict[str, Any]
     return outliers
 
 
-def generate_insights(schema: dict, query_result: dict, reliability_result: dict | None = None, semantic: dict | None = None) -> dict:
-    """Generate KPI-aware business insights from query results."""
+def _fmt_num(v) -> str:
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, int) or (isinstance(v, float) and v.is_integer() and abs(v) < 1e15):
+        return f"{int(v):,}"
+    if isinstance(v, float):
+        return f"{v:,.2f}"
+    return str(v)
+
+
+def _headline(rows: List[dict], columns: List[str], best_dim: str | None, metric_cols: List[str],
+              totals: Dict[str, float] | None = None) -> str:
+    """One factual sentence stating what the result says. Describes the returned rows only; it never claims the
+    rows answer the question correctly (that is the verifier's job)."""
+    if not rows:
+        return "No rows were returned."
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+    if len(rows) == 1:
+        parts = [f"{c}: {_fmt_num(rows[0].get(c))}" for c in columns[:4] if rows[0].get(c) is not None]
+        return ("Result: " + "; ".join(parts) + ".") if parts else "One row was returned."
+    metric = next((m for m in metric_cols if m in columns), None)
+    if best_dim and metric:
+        vals = [r for r in rows if num(r.get(metric)) and r.get(best_dim) is not None]
+        if len(vals) >= 2:
+            top = max(vals, key=lambda r: r[metric])
+            low = min(vals, key=lambda r: r[metric])
+            total = sum(r[metric] for r in vals) if totals is None else totals.get(metric, 0)
+            share = f" ({top[metric] / total * 100:.1f}% of the total)" if total > 0 and all(r[metric] >= 0 for r in vals) else ""
+            return (f"{top[best_dim]} has the highest {metric} at {_fmt_num(top[metric])}{share}; "
+                    f"{low[best_dim]} has the lowest at {_fmt_num(low[metric])} ({len(vals)} {best_dim} values compared).")
+    return f"{len(rows)} rows returned."
+
+
+def generate_insights(schema: dict, query_result: dict, reliability_result: dict | None = None, semantic: dict | None = None,
+                      db_path: str | None = None) -> dict:
+    """Generate KPI-aware business insights from query results. Shares of a total use the whole result: when the SQL
+    has a LIMIT the denominator is recomputed without it (needs ``db_path``), and no share is stated if it cannot be."""
     rows = query_result.get("rows", [])
     columns = query_result.get("columns", [])
     if not rows:
@@ -133,7 +219,8 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
     row_count = len(rows)
     kpis = _kpi_columns(query_result, semantic)
     dims = _dimension_columns(rows, columns)
-    best_dim = _best_dimension(dims)
+    # a time column is an axis, not a category to apportion a 'share of total' across
+    best_dim = _best_dimension([d for d in dims if not any(h in str(d).lower() for h in _TIME_HINTS)])
     num_cols = _numeric_columns(rows, columns)
 
     key_findings = []
@@ -166,9 +253,20 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
             anomalies.append("Null density is relatively high compared with row count.")
             recommendations.append("Inspect missing-value handling for the affected fields.")
 
+    time_axis = _has_time_axis(rows, columns)
+    # None: the rows are the whole result, so their own sum is the total. A dict: totals recomputed without the LIMIT.
+    totals = _full_totals(query_result.get("sql"), db_path, kpis[:2]) if _limited(query_result.get("sql")) else None
     for metric_col in kpis[:2]:
-        if best_dim:
-            contrib = _top_contributor_analysis(rows, best_dim, metric_col, top_n=3)
+        if best_dim and not _is_additive_metric(metric_col):
+            outliers = _outlier_detection(rows, metric_col)
+            if outliers:
+                anomalies.append(f"{metric_col} contains {len(outliers)} outlier row(s).")
+        elif best_dim:
+            if totals is not None and metric_col not in totals:
+                contrib = {"has_data": False}      # partial rows and no full total: a share would be wrong
+            else:
+                contrib = _top_contributor_analysis(rows, best_dim, metric_col, top_n=3,
+                                                    total=None if totals is None else totals[metric_col])
             if contrib.get("has_data"):
                 top = contrib["top_contributors"]
                 if top:
@@ -176,7 +274,7 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
                     key_findings.append(
                         f"{top1['dimension']} contributes {top1['share_pct']:.2f}% of total {metric_col}."
                     )
-                    if contrib["concentration_pct"] >= 70:
+                    if len(top) >= 2 and contrib["concentration_pct"] >= 70:
                         key_findings.append(
                             f"{metric_col.capitalize()} is highly concentrated across {best_dim}; the top two contributors account for {contrib['concentration_pct']:.2f}% of the total."
                         )
@@ -187,7 +285,7 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
                 if outliers:
                     anomalies.append(f"{metric_col} contains {len(outliers)} outlier row(s).")
                     recommendations.append(f"Investigate outlier values in {metric_col} for potential data or business exceptions.")
-        else:
+        elif time_axis:
             vals = [float(r[metric_col]) for r in rows if isinstance(r.get(metric_col), (int, float)) and not isinstance(r.get(metric_col), bool)]
             if len(vals) >= 2:
                 trend, pct = _trend_label(vals)
@@ -198,7 +296,7 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
                     key_findings.append(f"{metric_col.capitalize()} declined across the result set by {abs(pct):.2f}% from first to last row.")
                     recommendations.append(f"Investigate the drivers behind the decline in {metric_col}.")
 
-    if not kpis and num_cols:
+    if not kpis and num_cols and time_axis:
         metric_col = num_cols[0]
         vals = [float(r[metric_col]) for r in rows if isinstance(r.get(metric_col), (int, float)) and not isinstance(r.get(metric_col), bool)]
         if len(vals) >= 2:
@@ -210,7 +308,8 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
 
     if profile.get("distinct_counts"):
         for c, dcount in list(profile["distinct_counts"].items())[:3]:
-            if row_count > 0 and dcount <= max(1, int(row_count * 0.1)):
+            numeric_like = c in num_cols or any(h in str(c).lower() for h in _TIME_HINTS)
+            if row_count >= 20 and not numeric_like and dcount <= max(1, int(row_count * 0.1)):
                 anomalies.append(f"Column '{c}' has low distinctness relative to row count.")
                 recommendations.append(f"Check whether '{c}' is being over-aggregated or affected by join duplication.")
 
@@ -225,9 +324,10 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
     confidence_score = reliability_result.get("reliability_score", 0) if reliability_result else 50
     insight_confidence = "High" if confidence_score >= 90 else "Medium" if confidence_score >= 75 else "Low"
 
-    executive_note = "The output is suitable for business review."
+    headline = _headline(rows, columns, best_dim, kpis + [c for c in num_cols if c not in kpis], totals)
+    executive_note = headline
     if insight_confidence == "Low":
-        executive_note = "The output should be reviewed before use in decision-making."
+        executive_note += " Review before using this in a decision."
     if anomalies:
         executive_note += f" Key exception: {anomalies[0]}"
 
@@ -238,6 +338,7 @@ def generate_insights(schema: dict, query_result: dict, reliability_result: dict
         "recommendations": recommendations[:5],
         "insight_confidence": insight_confidence,
         "executive_note": executive_note,
+        "headline": headline,
         "metadata": {
             "row_count": row_count,
             "column_count": len(columns),

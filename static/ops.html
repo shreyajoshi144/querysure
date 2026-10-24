@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>QuerySure Ops</title>
+<link rel="stylesheet" href="/static/css/ops.css">
+</head>
+<body>
+<header>
+  <h1>QuerySure Ops</h1>
+  <span id="status" class="pill">loading</span>
+  <label>Window
+    <select id="window"><option value="5">5 min</option><option value="15" selected>15 min</option><option value="60">1 h</option><option value="360">6 h</option></select>
+  </label>
+  <span id="updated" class="muted"></span>
+</header>
+<p class="notice">Aggregate system metrics only. No prompts, datasets, files, SQL, results, reports or user identities are available here.</p>
+<p id="error" class="error" hidden></p>
+<main id="grid"></main>
+<script src="/static/js/ops.js"></script>
+</body>
+</html>

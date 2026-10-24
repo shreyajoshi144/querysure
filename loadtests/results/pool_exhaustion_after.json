@@ -1,0 +1,137 @@
+{
+ "probes": [
+  {
+   "path": "/api/health",
+   "status": 200,
+   "ms": 56,
+   "body": {
+    "status": "ok",
+    "success": true
+   },
+   "t": 950.7
+  },
+  {
+   "path": "/api/ready",
+   "status": 503,
+   "ms": 2032,
+   "body": {
+    "success": false,
+    "status": "not_ready",
+    "checks": {
+     "database": false,
+     "redis": true
+    },
+    "degraded": []
+   },
+   "t": 952.8
+  },
+  {
+   "path": "/api/health",
+   "status": 200,
+   "ms": 30,
+   "body": {
+    "status": "ok",
+    "success": true
+   },
+   "t": 953.3
+  },
+  {
+   "path": "/api/ready",
+   "status": 503,
+   "ms": 33,
+   "body": {
+    "success": false,
+    "status": "not_ready",
+    "checks": {
+     "database": false,
+     "redis": true
+    },
+    "degraded": []
+   },
+   "t": 953.3
+  },
+  {
+   "path": "/api/health",
+   "status": 200,
+   "ms": 32,
+   "body": {
+    "status": "ok",
+    "success": true
+   },
+   "t": 953.9
+  },
+  {
+   "path": "/api/ready",
+   "status": 503,
+   "ms": 36,
+   "body": {
+    "success": false,
+    "status": "not_ready",
+    "checks": {
+     "database": false,
+     "redis": true
+    },
+    "degraded": []
+   },
+   "t": 953.9
+  },
+  {
+   "path": "/api/health",
+   "status": 200,
+   "ms": 45,
+   "body": {
+    "status": "ok",
+    "success": true
+   },
+   "t": 954.4
+  },
+  {
+   "path": "/api/ready",
+   "status": 503,
+   "ms": 54,
+   "body": {
+    "success": false,
+    "status": "not_ready",
+    "checks": {
+     "database": false,
+     "redis": true
+    },
+    "degraded": []
+   },
+   "t": 954.5
+  }
+ ],
+ "unrelated_authenticated_request_during_exhaustion": [
+  503,
+  10043,
+  "SERVER_BUSY"
+ ],
+ "blocked_requests": [
+  [
+   503,
+   10.2
+  ],
+  [
+   503,
+   10.2
+  ],
+  [
+   200,
+   15.9
+  ],
+  [
+   200,
+   15.9
+  ]
+ ],
+ "recovered_ready": [
+  [
+   200,
+   "ready"
+  ],
+  [
+   200,
+   "ready"
+  ]
+ ]
+}

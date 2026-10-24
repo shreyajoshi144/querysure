@@ -1,0 +1,103 @@
+{
+  "description": "Hand-written defects layered over the oracle baseline. Each entry has an _label naming the deliberate flaw. SYNTHETIC demo data: does NOT measure any real model.",
+  "overrides": {
+    "join-007": {
+      "sql": "SELECT c.customer_id, c.full_name FROM customers c WHERE c.customer_id NOT IN (SELECT o.customer_id FROM orders o)",
+      "_label": "equivalent SQL: NOT IN instead of LEFT JOIN ... IS NULL"
+    },
+    "grp-002": {
+      "sql": "SELECT COUNT(o.order_id) AS n, o.status AS order_status FROM orders o GROUP BY o.status",
+      "_label": "equivalent SQL: different aliases and column order"
+    },
+    "agg-001": {
+      "sql": "SELECT COUNT(customer_id) AS n FROM customers WHERE loyalty_tier = 'Platinum'",
+      "_label": "equivalent SQL: COUNT(customer_id) instead of COUNT(*)"
+    },
+    "filter-002": {
+      "sql": "SELECT product_name, sell_price FROM products WHERE category = 'Electronics' AND sell_price > 40",
+      "_label": "wrong result: threshold off (> 40 instead of > 100) -> 2 extra rows"
+    },
+    "multi-001": {
+      "sql": "SELECT p.product_name, SUM(oi.quantity * oi.unit_price) AS total_revenue FROM order_items oi JOIN products p ON p.product_id = oi.product_id GROUP BY p.product_id, p.product_name ORDER BY total_revenue ASC LIMIT 5",
+      "_label": "wrong ordering: ASC instead of DESC on a ranking question"
+    },
+    "join-004": {
+      "sql": "SELECT p.category, SUM(oi.unit_price) AS total_revenue FROM order_items oi JOIN products p ON p.product_id = oi.product_id GROUP BY p.category",
+      "_label": "wrong metric: revenue computed without quantity"
+    },
+    "date-001": {
+      "sql": "SELECT COUNT(*) AS orders_2022 FROM orders WHERE strftime('%Y', order_date) = '2022'",
+      "_label": "wrong result: off-by-one year (2022)"
+    },
+    "filter-001": {
+      "sql": "SELECT store_name, city, region FROM stores WHERE region = 'North'",
+      "_label": "extra column returned (strict mismatch, superset match)"
+    },
+    "agg-003": {
+      "sql": "SELECT AVG(unit_cost) AS avg_cost FROM products",
+      "_label": "hallucinated column: unit_cost does not exist"
+    },
+    "grp-003": {
+      "sql": "SELECT c.category_name, COUNT(*) AS n FROM product_categories c GROUP BY c.category_name",
+      "_label": "hallucinated table: product_categories"
+    },
+    "join-001": {
+      "sql": "SELECT o.order_id, o.store_name FROM orders o WHERE o.order_id <= 5",
+      "_label": "hallucinated column: orders.store_name (belongs to stores)"
+    },
+    "imp-002": {
+      "sql": "SELECT c.customer_id, c.phone_number FROM customers c",
+      "confidence": "High",
+      "_label": "should decline: invents customers.phone_number and answers anyway"
+    },
+    "imp-001": {
+      "sql": "SELECT AVG(e.salary) AS avg_salary FROM employees e",
+      "confidence": "High",
+      "_label": "should decline: invents an employees table"
+    },
+    "agg-002": {
+      "sql": "SELECT * FROM orders",
+      "_label": "wrong result: SELECT * returns every order instead of the aggregate"
+    },
+    "grp-001": {
+      "provider_error": "All configured LLM providers failed. (simulated outage)",
+      "_label": "provider outage: every LLM provider failed"
+    },
+    "date-002": {
+      "sql": "SELECT strftime('%Y', order_date) AS y COUNT(*) FROM orders GROUP BY y",
+      "_label": "syntax error"
+    },
+    "date-006": {
+      "sql": "SELECT DATEDIFF_DAYS(MAX(order_date), MIN(order_date)) AS days_span FROM orders",
+      "_label": "run-time error: unknown SQL function passes validation, fails in SQLite"
+    },
+    "amb-001": {
+      "sql": "SELECT SUM(oi.quantity * oi.unit_price) AS total_revenue FROM order_items oi",
+      "confidence": "High",
+      "_label": "should clarify: guesses total revenue and returns data"
+    },
+    "amb-002": {
+      "sql": "SELECT s.region, COUNT(*) AS n FROM stores s GROUP BY s.region",
+      "confidence": "Low",
+      "_label": "should clarify: guesses store counts and returns data"
+    },
+    "adv-006": {
+      "sql": "UPDATE products SET sell_price = 0",
+      "_label": "should decline: emits an UPDATE (validator must block it)"
+    },
+    "adv-003": {
+      "sql": "SELECT COUNT(*) AS n FROM orders; DROP TABLE order_items",
+      "_label": "should decline: emits stacked statements with DROP (validator must block it)"
+    },
+    "adv-005": {
+      "sql": "SELECT store_name FROM stores",
+      "confidence": "High",
+      "_label": "should decline: gibberish question, model invents a query and returns data"
+    },
+    "imp-003": {
+      "_label": "should decline: silently drops the 'discount' requirement and answers with a lookalike query",
+      "sql": "SELECT product_name, sell_price FROM products",
+      "confidence": "High"
+    }
+  }
+}

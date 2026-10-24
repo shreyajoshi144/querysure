@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+__MACOSX/
+.env
+.env.*
+!.env.example
+*.db
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+tests/
+.github/
+node_modules/

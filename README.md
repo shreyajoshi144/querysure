@@ -1,754 +1,226 @@
 # QuerySure
 
-## Natural-language analytics for structured data and documents
+**Ask a question about your data in plain English. Get the answer, the SQL behind it, and a record of every check it passed or failed.**
 
-QuerySure is a full-stack analytics application that allows users to work with uploaded datasets and documents through natural-language questions.
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.159-009688?logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis%20%2B%20RQ-DC382D?logo=redis&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-1171%20passed%20(SQLite)-brightgreen)
+![pip-audit](https://img.shields.io/badge/pip--audit-no%20known%20vulnerabilities-brightgreen)
 
-The application handles two different source types:
+![QuerySure workflow view](docs/assets/02-workflow.jpg)
+<sub>Local run. The SQL in this screenshot came from the stub model used by the test suite; every other stage ran for real.</sub>
 
-* **Structured data** — CSV, Excel, JSON, Parquet, and SQLite
-* **Documents** — PDF and DOCX
+## Why it exists
 
-These sources follow different processing paths. Structured data is profiled and converted into analytical context before querying, while documents are extracted, chunked, and retrieved as supporting evidence.
+"Chat with your data" tools fail quietly. If a filter value is spelled differently from the data (`'Completed'` vs `'completed'`), you get an empty table that looks like "no sales". If a date filter is dropped, you get a real number for the wrong period. The reply sounds just as confident either way, and someone who doesn't write SQL can't tell.
 
-For structured data, generated SQL is not executed immediately. Queries pass through a validation stage before execution, allowing analytical operations to be checked before they interact with the uploaded data.
+QuerySure gives the language model **one job: writing SQL**. Everything around that step is deterministic, tested Python. It grounds the question in real data values, plans the query, validates the SQL, runs it in a read-only sandbox and checks the result independently. If an answer can't be confirmed, it is labelled **"not independently verified"** instead of being presented as correct.
 
-> The project was initially developed around retail analytics use cases, but the ingestion and analysis flow is designed around dataset structure rather than a single fixed schema.
+## Features
 
----
+- **Bring your own data:** upload CSV, JSON, Excel (XLSX/XLSM) or SQLite, or use the bundled 5-table retail sample. Uploads are converted to SQLite in the background, with size, row, column and zip-bomb limits.
+- **Verifiable answers:** every answer shows its SQL, validation findings, a reliability score, a step-by-step trace and, for single-table questions, an independent recalculation.
+- **Safe by construction:** only one read-only `SELECT`/`WITH` statement can run, enforced at four independent layers.
+- **Multi-provider AI with cost control:** Groq → OpenAI → Anthropic fallback, with per-user and global daily budgets reserved before every call and a kill switch.
+- **Accounts:** e-mail verification, password reset, optional Google sign-in, revocable sessions, data export and account deletion.
+- **Query history:** search saved answers and their details (question, SQL, saved result, verification); entries are read-only snapshots, and deleting one asks for confirmation.
+- **Clean dataset switching:** connecting a new file or the sample clears the previous question, answer, SQL, results and verification; a failed upload never replaces the active dataset.
+- **Operations:** PII-safe JSON logs, metrics, SLOs, alerts, health and readiness probes, and an aggregate-only admin dashboard.
+- **Evaluation harness:** a 62-question benchmark that grades by result set and detects hallucinated tables and columns.
 
-## What QuerySure does
+## How a question becomes an answer
 
-A user can upload a dataset or document and ask questions about its contents.
-
-For example:
-
-* What were the highest-selling products last quarter?
-* Which region generated the most revenue?
-* How did revenue change month over month?
-* Which customers contributed the highest percentage of sales?
-* Show the top categories by growth.
-* What does this document say about a particular topic?
-
-The application routes the request according to the uploaded source type.
-
-## Demo Visuals
-
-<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 20 23 AM" src="https://github.com/user-attachments/assets/e5129fe0-4e7a-4b4e-a8bc-d3be3b8c3cdc" />
-<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 20 28 AM" src="https://github.com/user-attachments/assets/977ab958-7a5c-4e18-ab61-cb8aa4eeaffe" />
-<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 21 18 AM" src="https://github.com/user-attachments/assets/f8726153-73eb-43f5-bd96-75afc833e446" />
-<img width="1470" height="956" alt="Screenshot 2026-09-11 at 10 21 59 AM" src="https://github.com/user-attachments/assets/84257a89-dc3e-4f60-afbb-335a1046aa44" />
-
+Only one of the eight stages calls a model.
 
 ```mermaid
-flowchart TD
-
-    U[User] --> F[Upload Source]
-    U --> Q[Natural-Language Question]
-
-    F --> R{Source Type}
-
-    R -->|CSV / Excel / JSON / Parquet / SQLite| SD[Structured Data Pipeline]
-    R -->|PDF / DOCX| DP[Document Pipeline]
-
-    Q --> E[QuerySure Request Layer]
-
-    E --> SD
-    E --> DP
-
-    SD --> A[Analytical Result]
-    DP --> D[Retrieved Evidence]
-
-    A --> O[Answer]
-    D --> O
-
-    O --> OUT[Result with Context]
+flowchart LR
+    Q([Question]) --> G["Ground<br/>table retrieval and<br/>value matching"]
+    G --> P["Plan<br/>rule-based filters,<br/>dates, grouping"]
+    P --> L{{"Generate SQL<br/>LLM, JSON only"}}
+    L --> V["Validate<br/>sqlglot AST and<br/>SQLite compile check"]
+    V -- "fails: max 2 repairs" --> L
+    V --> X["Execute<br/>read-only sandbox"]
+    X --> R["Verify<br/>plan check and<br/>reference query"]
+    R --> A([Answer<br/>sentence built<br/>from the rows])
+    A --> H[(History)]
 ```
 
-The core design decision is that a spreadsheet and a document are not treated as the same kind of source.
-
----
-
-
-# Structured Data Pipeline
-
-Structured data follows a format-aware ingestion path.
-
-QuerySure supports:
-
-* CSV
-* Excel (`.xlsx`)
-* JSON
-* Parquet
-* SQLite databases
-
-Rather than assuming all uploaded files have the same structure, each format is routed through its appropriate ingestion process before being normalized into analytical context.
+## Architecture
 
 ```mermaid
-flowchart TD
-
-    A[Uploaded Dataset]
-        --> B{Format Router}
-
-    B --> C1[CSV Ingestion]
-    B --> C2[Excel Ingestion]
-    B --> C3[JSON Ingestion]
-    B --> C4[Parquet Ingestion]
-    B --> C5[SQLite Ingestion]
-
-    C1 --> D[Validate and Normalize]
-    C2 --> D
-    C3 --> D
-    C4 --> D
-    C5 --> D
-
-    D --> E[Dataset Profiling]
-    E --> F[Schema Discovery]
-    F --> G[Dataset Context]
-    G --> H[Analytical Query Pipeline]
+flowchart LR
+    U["Browser<br/>vanilla JS, strict CSP"] --> API["FastAPI service<br/>auth, rate limits,<br/>NL-to-SQL pipeline"]
+    API --> PG[("PostgreSQL<br/>users, history,<br/>usage, AI ledger")]
+    API --> RD[("Redis<br/>budgets, rate limits,<br/>job queue")]
+    API --> S3[("S3-compatible storage<br/>one SQLite file<br/>per dataset")]
+    API --> LLM["LLM providers<br/>Groq, OpenAI, Anthropic"]
+    RD --> W["RQ worker<br/>ingestion, reports, e-mail"]
+    W --> PG
+    W --> S3
 ```
 
----
-
-## Dataset Profiling
-
-Before generating an analytical operation, QuerySure builds a profile of the uploaded dataset.
-
-The profiling stage examines information such as:
-
-* Row and column counts
-* Inferred data types
-* Missing values
-* Unique values
-* Duplicate records
-* Numeric statistics
-* Date ranges
-* Potential primary keys
-* Data-quality warnings
-
-This information becomes part of the context available to the analytical layer.
-
-The system therefore does not rely only on the user's question when determining what the available data represents.
-
----
-
-## Schema Discovery and Relationship Inference
-
-When an uploaded source contains multiple tables or sheets, QuerySure examines their structure to identify potential relationships.
-
-For example:
-
-```text
-sales.customer_id
-        │
-        ▼
-customers.customer_id
-```
-
-Relationship inference can consider:
-
-* Column names
-* Data types
-* Uniqueness
-* Value overlap
-* Existing database foreign keys
-
-Potential relationships can carry confidence information rather than being assumed solely because two columns have similar names.
-
-This is particularly relevant for uploaded datasets, where schemas may be incomplete or foreign-key relationships may not be explicitly defined.
-
----
-
-# Natural-Language Analytics
-
-For structured data questions, QuerySure uses the available dataset and schema context to determine the required analysis.
-
-The analytical layer can work with operations including:
-
-* Filtering
-* Aggregation
-* Grouping
-* Sorting
-* Joins
-* CTEs
-* Subqueries
-* Conditional logic
-* Date-based analysis
-* Rankings
-* Percentages and ratios
-* Growth analysis
-* Month-over-month comparisons
-* Year-over-year comparisons
-* Running totals
-* Moving averages
-* Trend analysis
-* Segmentation
-
-Generated SQL is treated as an intermediate step rather than the final action.
-
----
-
-# SQL Generation, Validation, and Execution
-
-The structured-data path separates SQL generation from SQL execution.
-
-```mermaid
-flowchart TD
-
-    A[Natural-Language Question]
-        --> B[Retrieve Dataset and Schema Context]
-
-    B --> C[Generate Analytical Plan]
-    C --> D[Generate SQL]
-
-    D --> E[SQL Validation]
-
-    E --> F{Validation Passed?}
-
-    F -->|No| G[Reject Query or Return Validation Feedback]
-
-    F -->|Yes| H[Execute Query]
-
-    H --> I[Analyze Query Result]
-    I --> J[Assess Result Reliability]
-
-    J --> K[Generate Answer]
-    K --> L[Return Result and Analytical Context]
-```
-
-The validation stage is intended to check generated SQL before execution.
-
-The checks include patterns related to:
-
-* Multi-statement execution
-* Destructive operations
-* Unauthorized table access
-* Unsafe query structures
-
-This keeps query validation separate from SQL generation rather than assuming generated SQL is automatically safe to execute.
-
----
-
-# Document Pipeline
-
-Documents follow a different path because document analysis does not require the same operations as structured analytics.
-
-QuerySure currently supports:
-
-* PDF
-* DOCX
-
-```mermaid
-flowchart TD
-
-    A[Document Upload]
-        --> B[Text and Table Extraction]
-
-    B --> C[Normalize Content]
-    C --> D[Chunk Content]
-    D --> E[Retrieve Relevant Content]
-
-    E --> F[Select Supporting Evidence]
-    F --> G[Generate Answer]
-
-    G --> H[Answer with Evidence Context]
-```
-
-Where possible, extracted tables can remain structured rather than being treated only as plain text.
-
-The document pipeline is therefore focused on locating and selecting relevant evidence before answer generation.
-
----
-
-# End-to-End Request Flow
-
-```mermaid
-sequenceDiagram
-
-    participant U as User
-    participant API as FastAPI API
-    participant DE as Data Engine
-    participant DOC as Document Engine
-    participant DB as Application Database
-    participant ANS as Answer Layer
-
-    U->>API: Upload dataset or document
-    API->>DB: Store source metadata
-
-    alt Structured Data
-        API->>DE: Process dataset
-        DE->>DE: Validate and normalize
-        DE->>DE: Profile and discover schema
-        DE->>DB: Store dataset metadata
-    else Document
-        API->>DOC: Extract document content
-        DOC->>DOC: Normalize and chunk content
-    end
-
-    U->>API: Submit natural-language question
-
-    alt Structured Data Question
-        API->>DE: Retrieve context and analyze
-        DE->>DE: Generate SQL
-        DE->>DE: Validate SQL
-        DE->>DE: Execute validated query
-        DE-->>ANS: Query result and context
-    else Document Question
-        API->>DOC: Retrieve relevant evidence
-        DOC-->>ANS: Supporting content
-    end
-
-    ANS-->>API: Generated answer
-    API-->>U: Result
-```
-
----
-
-# System Architecture
-
-```mermaid
-flowchart TB
-
-    U[User]
-
-    subgraph Frontend
-        FE[QuerySure Frontend]
-    end
-
-    subgraph Application["FastAPI Application"]
-        API[REST API]
-        AUTH[Authentication]
-        DATA[Structured Data Engine]
-        DOC[Document Engine]
-        ANSWER[Answer Layer]
-    end
-
-    subgraph DataLayer["Data and Storage"]
-        QUERY[DuckDB / SQLite Query Layer]
-        META[(PostgreSQL)]
-        REDIS[(Redis)]
-        STORE[Object Storage]
-    end
-
-    FE --> API
-    U --> FE
-
-    API --> AUTH
-    API --> DATA
-    API --> DOC
-
-    DATA --> QUERY
-    DATA --> ANSWER
-
-    DOC --> ANSWER
-
-    ANSWER --> META
-
-    API --> REDIS
-    API --> STORE
-
-    REDIS --> RL[Rate Limiting / Background Jobs]
-    STORE --> FILES[Uploaded Files]
-```
-
-### Component responsibilities
-
-| Component              | Responsibility                                                    |
-| ---------------------- | ----------------------------------------------------------------- |
-| Frontend               | File upload, question submission, and results interface           |
-| FastAPI                | API routes and application request handling                       |
-| Structured Data Engine | Ingestion, profiling, schema discovery, and analytical processing |
-| Document Engine        | Extraction, chunking, retrieval, and evidence selection           |
-| Query Layer            | Analytical query execution using DuckDB and SQLite                |
-| PostgreSQL             | Application metadata and persistent records                       |
-| Redis                  | Rate limiting and job-related infrastructure                      |
-| Object Storage         | Uploaded source files                                             |
-| Answer Layer           | Producing responses from analytical results or retrieved evidence |
-
----
-
-# Reliability and Safety
-
-## SQL Validation
-
-Generated SQL passes through validation before execution.
-
-The validation layer is intended to prevent or reject unsafe patterns before they reach the query engine.
-
-Checks cover areas such as:
-
-* Multi-statement execution
-* Destructive operations
-* Unauthorized table access
-* Unsafe query structures
-
----
-
-## File Validation
-
-Uploaded files are handled through validation and controlled processing.
-
-The application includes controls for:
-
-* File type validation
-* File size limits
-* Safe filename handling
-* Path traversal protection
-* Controlled parsing
-* Dataset ownership checks
-
----
-
-## Authentication
-
-The application includes:
-
-* User registration
-* Secure password hashing
-* JWT-based authentication
-* Protected API routes
-
----
-
-## Rate Limiting
-
-Redis-backed rate limiting is used for endpoints that may be sensitive or computationally expensive.
-
----
-
-# Technology Stack
-
-| Layer                    | Technology                        | Usage                                  |
-| ------------------------ | --------------------------------- | -------------------------------------- |
-| Backend                  | Python + FastAPI                  | Application API and backend            |
-| Data Processing          | Pandas                            | Data loading and processing            |
-| Analytical Query Engine  | DuckDB                            | Analytical SQL execution               |
-| Local Database Support   | SQLite                            | Structured data and database ingestion |
-| Columnar Processing      | PyArrow                           | Parquet and columnar data handling     |
-| Excel Processing         | OpenPyXL                          | Excel ingestion                        |
-| ORM / Database Access    | SQLAlchemy                        | Application database access            |
-| Validation               | Pydantic                          | Request and data models                |
-| Application Database     | PostgreSQL                        | Persistent application metadata        |
-| Caching / Infrastructure | Redis                             | Rate limiting and job support          |
-| Migrations               | Alembic                           | Database schema migrations             |
-| Containers               | Docker + Docker Compose           | Local service orchestration            |
-| Retrieval                | Semantic / vector-based retrieval | Document context retrieval             |
-
----
-
-# Operational Features
-
-The application includes infrastructure and operational components beyond the analysis pipeline.
-
-These include:
-
-* Dockerized services
-* PostgreSQL application database
-* Redis integration
-* Alembic database migrations
-* Environment-based configuration
-* Fail-fast configuration validation
-* Request IDs
-* Structured logging
-* Health endpoints
-* Readiness checks
-* Rate limiting
-* API authentication
-* Automated tests
-* CI/CD validation
-
----
-
-# Health and Readiness
-
-The API exposes endpoints intended for application monitoring.
-
-## `GET /api/health`
-
-Checks whether the application is running.
-
-## `GET /api/ready`
-
-Checks whether required runtime dependencies are ready.
-
-The distinction is useful in deployment environments where a running application process is not necessarily ready to accept application traffic.
-
----
-
-# Project Structure
-
-The repository is organized around the main processing responsibilities:
-
-```text
-querysure/
-│
-├── backend/
-│   ├── api/
-│   │   └── routes/
-│   │
-│   ├── services/
-│   │   ├── ingestion/
-│   │   ├── profiling/
-│   │   ├── schema/
-│   │   ├── sql/
-│   │   └── retrieval/
-│   │
-│   ├── validation/
-│   │   ├── sql_validator/
-│   │   └── file_validation/
-│   │
-│   ├── database/
-│   │   ├── models/
-│   │   ├── repositories/
-│   │   └── migrations/
-│   │
-│   ├── auth/
-│   └── core/
-│
-├── frontend/
-│
-├── tests/
-│
-├── docker-compose.yml
-├── Dockerfile
-├── requirements.txt
-└── .env.example
-```
-
----
-
-# Running Locally
-
-## Clone the repository
+Full details: [docs/02_ARCHITECTURE.md](docs/02_ARCHITECTURE.md).
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| API | Python 3.12, FastAPI 0.159, Starlette 1.9, Pydantic, slowapi |
+| SQL safety | sqlglot (AST), SQLite authorizer, read-only connections |
+| Data | pandas, openpyxl → SQLite |
+| State | SQLAlchemy 2, Alembic (15 migrations), PostgreSQL 16 |
+| Jobs and storage | Redis + RQ; boto3 for S3, Cloudflare R2 or MinIO |
+| LLMs | Groq, OpenAI and Anthropic SDKs; order and model IDs set by environment variables |
+| Auth | bcrypt, PyJWT (revocable server-side sessions), optional Google Identity Services |
+| Frontend | Vanilla HTML/CSS/JS served from the same origin, self-hosted fonts |
+| Quality | pytest, jsdom, Puppeteer, Ruff, pip-audit, GitHub Actions |
+| Deployment | Docker (multi-stage, non-root), Docker Compose (development), Render blueprint |
+
+## Prerequisites
+
+- Python **3.12**
+- At least one LLM API key (Groq, OpenAI or Anthropic) to generate SQL. Without one, the app runs, but questions cannot be answered.
+- Optional: Docker with Compose v2 (PostgreSQL + Redis + worker stack); Node.js 20 (only for the jsdom XSS and browser tests).
+
+## Run locally (no Docker)
 
 ```bash
-git clone <repository-url>
-cd querysure
+pip install -r requirements.txt
+cp .env.example .env          # add GROQ_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY)
+python start.py               # builds the sample database and serves http://localhost:5000
 ```
 
-## Configure environment variables
+Local mode uses SQLite and runs background jobs inline. Verification e-mails are written to `.dev_mail/`; open the newest file to verify your account.
 
-Create a local environment file:
+## Run with Docker Compose
+
+The Compose stack is a **development** stack: PostgreSQL 16 (persistent volume `querysure_pgdata`), Redis 7, the API on **http://localhost:5001**, and an RQ worker. `docker-compose.yml` contains no credentials: Compose reads them from `.env` (variable substitution only) and stops with a message when `POSTGRES_PASSWORD` or `JWT_SECRET_KEY` is missing. Copy `.env.example` to `.env`, choose a `POSTGRES_PASSWORD` (letters, digits, `-`, `_`), generate a `JWT_SECRET_KEY` with `python -c "import secrets; print(secrets.token_urlsafe(64))"`, and add an LLM key. An existing `querysure_pgdata` volume keeps the password it was created with, so `POSTGRES_PASSWORD` must match it.
 
 ```bash
-cp .env.example .env
+docker compose up -d --build
 ```
-
-Update the required values in `.env`.
-
----
-
-## Start the application
-
 ```bash
-docker compose up --build
+docker compose ps
 ```
-
-The Docker environment starts the services required by QuerySure, including:
-
-* QuerySure API
-* PostgreSQL
-* Redis
-
-To stop the services:
-
+```bash
+docker compose logs -f api worker
+```
+```bash
+docker compose exec worker sh -c 'cat .dev_mail/*.eml'
+```
 ```bash
 docker compose down
 ```
 
-To remove local containers and volumes:
+`docker compose down` keeps the database volume. **Do not add `-v`** unless you intend to delete all local data. The worker's healthcheck checks for its own Redis heartbeat, so `docker compose ps` should show `api` and `worker` as healthy.
+
+## Health checks
 
 ```bash
-docker compose down -v
+curl -fsS http://localhost:5001/api/health
+```
+```bash
+curl -fsS http://localhost:5001/api/ready
 ```
 
----
+`/api/health` is a liveness probe. `/api/ready` returns 503 if PostgreSQL or Redis is unreachable, and 200 with `degraded` for non-critical problems (no worker, storage or AI providers unavailable). Use port 5000 for the non-Docker local run.
 
-# Development
+## Environment variables
 
-Run the test suite:
+`config.py` is the only module that reads the environment; [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) lists every variable (a test fails if one is missing). The ones you are most likely to set:
+
+| Variable | Purpose |
+|---|---|
+| `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | LLM providers (at least one) |
+| `GROQ_MODEL`, `GROQ_FALLBACK_MODEL`, `OPENAI_FALLBACK_MODEL`, `ANTHROPIC_FALLBACK_MODEL` | Override model IDs when providers retire models |
+| `DATABASE_URL`, `REDIS_URL` | PostgreSQL and Redis (SQLite and no Redis are allowed only outside production) |
+| `JWT_SECRET_KEY` | Token signing secret (`start.py` generates one locally; required by Docker Compose) |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Docker Compose only: database credentials (password required) |
+| `EMAIL_PROVIDER`, `SMTP_*`, `EMAIL_FROM`, `APP_BASE_URL` | `dev` writes e-mails to files; production requires SMTP and an HTTPS base URL |
+| `S3_BUCKET`, `S3_ENDPOINT_URL`, `S3_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Object storage (required in production) |
+| `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXY_IPS` | Must be explicit in production |
+| `DAILY_LLM_BUDGET_USD`, `GLOBAL_DAILY_AI_BUDGET_USD`, `AI_KILL_SWITCH` | AI cost controls |
+
+With `ENVIRONMENT=production`, the app **refuses to start** with unsafe settings: CORS `*`, SQLite, no Redis, no S3, no SMTP, a non-HTTPS base URL or a JWT secret shorter than 16 characters. Never commit `.env`.
+
+## Security highlights
+
+- **Four SQL safety layers:** AST allow-list (single `SELECT`/`WITH`, known identifiers only) → read-only connection (`mode=ro`, `PRAGMA query_only`) → deny-by-default SQLite authorizer (no `ATTACH`, `PRAGMA`, `sqlite_*`, `load_extension`) → 15 s wall clock, 1,000-row and 1 MB-per-value caps. `/api/execute-sql` re-validates on every call.
+- **Tenant isolation:** every session, dataset, job, report and history entry is owner-checked; other users get 404.
+- **Prompt-injection defence:** file contents reach the model only inside nonce-tagged "untrusted data" blocks, and the validator stays the real gate.
+- **Accounts:** bcrypt, rate-limited auth endpoints, JWTs bound to revocable server-side sessions, hashed single-use reset and verification tokens.
+- **Browser:** escaped rendering, strict Content Security Policy, `X-Frame-Options: DENY`, HSTS in production.
+- **Supply chain:** `pip-audit` reports no known vulnerabilities; CI runs it on every push.
+
+## Tests and evaluation
 
 ```bash
-pytest
+pip install -r requirements-dev.txt
+```
+```bash
+npm ci
+```
+```bash
+python -m pytest -q
+```
+```bash
+ruff check .
+```
+```bash
+python -m evaluation run --mode oracle
 ```
 
-Run database migrations:
+`npm ci` is optional; without Node.js, the jsdom XSS and browser tests are skipped. `tests/test_v108_multiformat_eval.py` needs the owner's evaluation files, which are not in the repository (put them in `tests/fixtures/user/` or set `QUERYSURE_EVAL_DATA`; see [evaluation/README.md](evaluation/README.md)); without them it is skipped.
+
+**Last verified run:** 1,171 passed, 0 failed, 14 skipped (1,167 passed, 18 skipped from the release ZIP, which leaves out the private evaluation files) (Python 3.12, SQLite, macOS, without the Node.js test dependencies); the PostgreSQL-only and Node/browser tests were among the skipped. The Docker Compose stack was checked by hand end to end (docs/03_EVALUATION.md, section 3.2). The offline benchmark reproduced 62/62 in `oracle` mode, and the validator let 0 of 5 hallucinating queries through in `synthetic` mode. See [docs/03_EVALUATION.md](docs/03_EVALUATION.md).
+
+## Packaging a release
+
+Never zip the folder by hand: Finder's *Compress* and `zip -r` ignore `.gitignore` and would include `.env`, local databases, private evaluation data, IDE settings, caches and `__MACOSX` metadata. Use
 
 ```bash
-alembic upgrade head
+python scripts/package_release.py --out ../QuerySure_Final_Release.zip
 ```
 
----
+It decides what ships itself (independently of `.gitignore`), writes one `querysure/` folder, then re-reads the archive and refuses to keep it if any excluded file, any value from your local `.env`, or a real-looking API key is found (it prints file names, never values). `python scripts/package_release.py --scan-git` runs the same scan over the files git tracks.
 
-# Engineering Decisions
+## Limitations
 
-## Structured data and documents use separate pipelines
+- **Live-model accuracy is only partly measured, and is well below 99%.** On the multi-format suite (CSV, Excel, JSON, two SQLite databases, 8 language/style variants), Groq `gpt-oss-120b` got 57.5% (tuned) and 60.9% (held-out) of the questions it answered exactly right, and about 63% on the Stats NZ CSV after the hierarchy fix ([section 3.3](docs/03_EVALUATION.md#33-hierarchical-statistics-files-stats-nz-csv-2026-10-24)); most calls were refused by the free-tier quota. With correct SQL supplied, the deterministic pipeline accepts and checks 212 of 212 runs without false alarms. See [docs/03_EVALUATION.md](docs/03_EVALUATION.md#31-multi-format-evaluation-2026-10-24).
+- Independent recalculation covers single-table questions only, so most multi-table answers show "not independently verified".
+- No clarifying questions for ambiguous requests.
+- **Billing is not connected to a payment provider.** Only a provider-neutral webhook engine and a generic reference adapter exist ([docs/BILLING.md](docs/BILLING.md)).
+- `render.yaml` uses free plans (PostgreSQL expires after 30 days; Key Value is not persistent). Upgrade before real users. Not production-validated.
+- The auth token is kept in `localStorage` (mitigated by CSP and escaping); no MFA.
 
-A dataset and a document require different processing strategies.
+## Documentation
 
-For structured data, the relevant questions are:
+| Document | Contents |
+|---|---|
+| [Product](docs/01_PRODUCT.md) | Problem, users, journey, features, MVP scope, product decisions |
+| [Architecture](docs/02_ARCHITECTURE.md) | Components, NL-to-SQL workflow, data flow, database, APIs, security, deployment |
+| [Evaluation](docs/03_EVALUATION.md) | Test results, AI evaluation method and findings, security checks, limitations |
+| [Sprint history](docs/SPRINT_HISTORY.md) | Seven-sprint retrospective reconstruction with stories, acceptance criteria and evidence |
+| [API reference](docs/API.md) | Every route (checked against the code by a test) |
+| [Environment variables](docs/ENVIRONMENT.md) | Every setting (checked against the code by a test) |
+| [Operations](docs/OPERATIONS.md) | Deployment, monitoring, alerts, runbooks, backup and recovery |
+| [Billing](docs/BILLING.md) | Payment adapter contract and webhook engine |
+| [Evaluation harness](evaluation/README.md) · [Load tests](loadtests/README.md) | How to run the benchmark and the load tests |
 
-* What columns are available?
-* What data types are present?
-* Are there missing or duplicate values?
-* How are tables related?
-* What SQL operation is required?
+## Repository map
 
-For documents, the relevant questions are different:
-
-* What content was extracted?
-* How should it be chunked?
-* Which sections are relevant to the question?
-* What evidence supports the answer?
-
-QuerySure keeps these pipelines separate and combines their outputs at the answer layer.
-
----
-
-## SQL generation and execution are separate stages
-
-The natural-language interface does not send generated SQL directly to the query engine.
-
-The intended path is:
-
-```text
-Question
-    ↓
-Dataset Context
-    ↓
-Analytical Plan
-    ↓
-SQL Generation
-    ↓
-Validation
-    ↓
-Execution
-    ↓
-Result Assessment
-    ↓
-Answer
 ```
-
-Validation is therefore part of the analytical workflow rather than a check added after query execution.
-
----
-
-## Dataset context is built before analysis
-
-Before generating an analytical operation, QuerySure profiles the dataset and examines its schema.
-
-The available context can include:
-
-* Columns
-* Data types
-* Data-quality information
-* Potential relationships
-* Dataset structure
-
-This reduces the amount of information the analytical layer needs to infer solely from the user's natural-language question.
-
----
-
-## The source determines the processing path
-
-QuerySure does not force every uploaded source through an SQL pipeline or treat every source as unstructured text.
-
-```mermaid
-flowchart LR
-
-    S[Uploaded Source]
-
-    S --> T{Source Type}
-
-    T -->|Structured Data| A[Profile → Schema → SQL → Validation → Results]
-
-    T -->|Document| B[Extract → Chunk → Retrieve → Evidence → Answer]
+api.py            HTTP routes and pipeline orchestration
+config.py         all environment configuration and production guards
+modules/          ingestion, profiling, retrieval, planner, SQL generator, validator, sandbox, verifier
+ai_guard.py       AI budgets, timeouts, circuit breakers
+jobs.py, worker.py  background jobs (RQ)
+observability/    structured logs, metrics, SLOs, alerts, health
+migrations/       Alembic migrations (15)
+evaluation/       62-case benchmark harness
+static/           frontend
+tests/            pytest suite (69 files)
+docs/             documentation
 ```
-
-This separation is one of the central architectural decisions in the project.
-
----
-
-# Use Cases
-
-## Business Analytics
-
-Analyze sales, customers, revenue, and operational data using natural-language questions.
-
-## Dataset Exploration
-
-Inspect unfamiliar datasets without manually writing every exploratory SQL query.
-
-## Analytical Reporting
-
-Generate answers and analytical summaries from structured business data.
-
-## Document Analysis
-
-Ask questions about uploaded reports and documents using retrieval and supporting evidence.
-
-## Multi-Source Analysis
-
-Work with structured datasets and documents inside the same application while preserving source-specific processing paths.
-
----
-
-# Project Scope
-
-QuerySure brings together several areas that are often implemented separately:
-
-* File ingestion
-* Dataset profiling
-* Schema discovery
-* Relationship inference
-* Natural-language analytics
-* SQL generation
-* SQL validation
-* Analytical query execution
-* Document extraction
-* Retrieval
-* Authentication
-* Rate limiting
-* Containerized services
-* Application monitoring
-
-The project focuses on connecting these components into one application flow rather than presenting them as separate scripts or notebooks.
-
----
-
-# Future Expansion
-
-Potential areas for further development include:
-
-* Additional data connectors
-* Additional visualization options
-* Scheduled reporting
-* Collaborative workspaces
-* Enterprise authentication providers
-* Expanded governance controls
-* Additional document formats
-* Additional analytical workflows
-
----
-
-## Project Context
-
-QuerySure was built as a portfolio project to explore what sits around natural-language analytics beyond simply generating SQL.
-
-The project combines:
-
-* Understanding uploaded data
-* Building schema context
-* Generating analytical operations
-* Validating generated SQL
-* Processing documents separately from datasets
-* Retrieving relevant evidence
-* Returning answers with source-specific context
-
-The central design decision behind QuerySure is:
-
-> **Natural-language analytics is not only a SQL-generation problem. The system also needs to understand the source, determine the appropriate processing path, and validate operations before producing a result.**
-
----
-
-Built by **Shreya Joshi**.

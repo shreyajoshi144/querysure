@@ -6,10 +6,28 @@ Combines question, SQL, validation, results, reliability, and insights into JSON
 from __future__ import annotations
 
 import csv
+import html as _html
 import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def _esc(value: Any) -> str:
+    """HTML-escapes any value bound for the standalone HTML report.
+
+    GAP FIXED: this report interpolates the user's own question, the
+    LLM-generated SQL, and insight/validation text (which can itself embed
+    raw table/column names -- see modules/sql_validator.py's
+    "unknown_table"/"unknown_column" messages, and a raw .db/.sqlite upload's
+    table names are never sanitized the way CSV/JSON/XLSX uploads are) into
+    an HTML file written to disk with an f-string, with no escaping at all.
+    Opening that file (locally, or once shared) would execute anything
+    HTML-significant it contained. Every interpolation below that carries
+    user- or LLM-influenced text goes through this first; the static
+    template markup and purely numeric/boolean fields do not need it.
+    """
+    return _html.escape(str(value), quote=True)
 
 
 def _safe_slug(text: str) -> str:
@@ -96,51 +114,51 @@ th {{ background: #f3f4f6; }}
 
 <div class="card">
 <h2>Question</h2>
-<p>{payload.get('question', '')}</p>
+<p>{_esc(payload.get('question', ''))}</p>
 </div>
 
 <div class="card">
 <h2>SQL</h2>
-<p><span class="badge">Confidence: {payload.get('sql_confidence')}</span><span class="badge">Complexity: {payload.get('sql_complexity')}</span></p>
-<pre>{payload.get('generated_sql', '')}</pre>
+<p><span class="badge">Confidence: {_esc(payload.get('sql_confidence'))}</span><span class="badge">Complexity: {_esc(payload.get('sql_complexity'))}</span></p>
+<pre>{_esc(payload.get('generated_sql', ''))}</pre>
 </div>
 
 <div class="card">
 <h2>Validation</h2>
 <p class="small">Valid: {validation.get('is_valid')} | Validation Score: {validation.get('validation_score')} | Risk Score: {validation.get('risk_score')}</p>
-<p class="small">Join Valid: {validation.get('join_validation', {}).get('valid')} | Aggregation Valid: {validation.get('aggregation_validation', {}).get('valid')} | Fan-out Risk: {validation.get('fanout_risk')}</p>
-<pre>{json.dumps(validation, indent=2, default=_json_default)}</pre>
+<p class="small">Join Valid: {validation.get('join_validation', {}).get('valid')} | Aggregation Valid: {validation.get('aggregation_validation', {}).get('valid')} | Fan-out Risk: {_esc(validation.get('fanout_risk'))}</p>
+<pre>{_esc(json.dumps(validation, indent=2, default=_json_default))}</pre>
 </div>
 
 <div class="card">
 <h2>Query Results</h2>
-<p class="small">Status: {query.get('status')} | Rows: {rows} | Columns: {cols} | Query ID: {query.get('query_id')}</p>
+<p class="small">Status: {_esc(query.get('status'))} | Rows: {rows} | Columns: {cols} | Query ID: {_esc(query.get('query_id'))}</p>
 <p class="small">Execution Time: {query.get('execution_metadata', {}).get('execution_time_ms')} ms | Truncated: {query.get('execution_metadata', {}).get('truncated')}</p>
-<pre>{json.dumps(query.get('result_profile', {}), indent=2, default=_json_default)}</pre>
+<pre>{_esc(json.dumps(query.get('result_profile', {}), indent=2, default=_json_default))}</pre>
 </div>
 
 <div class="card">
 <h2>Reliability</h2>
-<p class="small">Score: {reliability.get('reliability_score')} | Level: {reliability.get('reliability_level')} | Status: {reliability.get('status')}</p>
-<pre>{json.dumps(reliability, indent=2, default=_json_default)}</pre>
+<p class="small">Score: {reliability.get('reliability_score')} | Level: {_esc(reliability.get('reliability_level'))} | Status: {_esc(reliability.get('status'))}</p>
+<pre>{_esc(json.dumps(reliability, indent=2, default=_json_default))}</pre>
 </div>
 
 <div class="card">
 <h2>Insights</h2>
-<p><strong>Summary:</strong> {insights.get('summary', '')}</p>
-<p><strong>Insight Confidence:</strong> {insights.get('insight_confidence', 'Unknown')}</p>
-<p><strong>Executive Note:</strong> {insights.get('executive_note', '')}</p>
+<p><strong>Summary:</strong> {_esc(insights.get('summary', ''))}</p>
+<p><strong>Insight Confidence:</strong> {_esc(insights.get('insight_confidence', 'Unknown'))}</p>
+<p><strong>Executive Note:</strong> {_esc(insights.get('executive_note', ''))}</p>
 <h3>Key Findings</h3>
 <ul>
-{''.join(f'<li>{x}</li>' for x in insights.get('key_findings', []))}
+{''.join(f'<li>{_esc(x)}</li>' for x in insights.get('key_findings', []))}
 </ul>
 <h3>Anomalies</h3>
 <ul>
-{''.join(f'<li>{x}</li>' for x in insights.get('anomalies', []))}
+{''.join(f'<li>{_esc(x)}</li>' for x in insights.get('anomalies', []))}
 </ul>
 <h3>Recommendations</h3>
 <ul>
-{''.join(f'<li>{x}</li>' for x in insights.get('recommendations', []))}
+{''.join(f'<li>{_esc(x)}</li>' for x in insights.get('recommendations', []))}
 </ul>
 </div>
 </body>

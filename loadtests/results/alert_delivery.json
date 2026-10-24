@@ -1,0 +1,321 @@
+{
+ "A_config_guards": {
+  "http_webhook_refused": [
+   1,
+   "RuntimeError: ALERT_WEBHOOK_URL must use HTTPS in production."
+  ],
+  "https_webhook_accepted": [
+   0,
+   "ok True"
+  ],
+  "alerts_default_in_production": [
+   0,
+   "ALERTS_ENABLED= True webhook= ''"
+  ],
+  "alerts_default_in_development": [
+   0,
+   "ALERTS_ENABLED= False"
+  ],
+  "admin_emails_default_empty": [
+   0,
+   "[]"
+  ],
+  "sentry_dsn_without_sdk_installed_is_safe": [
+   0,
+   "SENTRY_DSN is set but sentry-sdk could not be initialised"
+  ]
+ },
+ "C_sentry_transport": {
+  "app_exit": 0,
+  "app_tail": "{\"ts\":\"2026-10-05T09:47:39.488Z\",\"level\":\"INFO\",\"logger\":\"httpx\",\"msg\":\"HTTP Request: POST http://testserver/api/_sentry_boom?token=[redacted] \\\"HTTP/1.1 500 Internal Server Error\\\"\"}",
+  "envelopes_received": 1,
+  "forbidden_strings_found": [],
+  "event_top_level_keys": [
+   "environment",
+   "event_id",
+   "exception",
+   "level",
+   "platform",
+   "tags",
+   "timestamp"
+  ],
+  "exception_type_and_value": [
+   [
+    "ExceptionGroup",
+    "[omitted]"
+   ],
+   [
+    "RuntimeError",
+    "[omitted]"
+   ]
+  ],
+  "tags": {
+   "component": "api",
+   "fingerprint": "cb74c1ffc672"
+  }
+ },
+ "B_live_alert_delivery": {
+  "ready_in_production": {
+   "success": true,
+   "status": "ready",
+   "checks": {
+    "database": true,
+    "redis": true
+   },
+   "degraded": []
+  },
+  "baseline_alerts_after_14s_healthy": [
+   [
+    "firing",
+    "slo_availability_burn",
+    "critical"
+   ]
+  ],
+  "outage_request_statuses": [
+   502
+  ],
+  "after_outage": [
+   [
+    "firing",
+    "slo_availability_burn",
+    "critical"
+   ],
+   [
+    "firing",
+    "ai_circuit_open",
+    "warning"
+   ],
+   [
+    "firing",
+    "ai_circuit_open",
+    "warning"
+   ],
+   [
+    "firing",
+    "ai_all_providers_down",
+    "critical"
+   ],
+   [
+    "firing",
+    "slo_breach",
+    "warning"
+   ]
+  ],
+  "after_recovery": [
+   [
+    "firing",
+    "slo_availability_burn",
+    "critical"
+   ],
+   [
+    "firing",
+    "ai_circuit_open",
+    "warning"
+   ],
+   [
+    "firing",
+    "ai_circuit_open",
+    "warning"
+   ],
+   [
+    "firing",
+    "ai_all_providers_down",
+    "critical"
+   ],
+   [
+    "firing",
+    "slo_breach",
+    "warning"
+   ],
+   [
+    "resolved",
+    "ai_all_providers_down",
+    "critical"
+   ],
+   [
+    "resolved",
+    "ai_circuit_open",
+    "warning"
+   ],
+   [
+    "resolved",
+    "ai_circuit_open",
+    "warning"
+   ]
+  ],
+  "incidents": [
+   [
+    "slo_breach",
+    "slo_breach:ai_success",
+    "open",
+    10
+   ],
+   [
+    "ai_all_providers_down",
+    "ai_all_providers_down",
+    "resolved",
+    6
+   ],
+   [
+    "ai_circuit_open",
+    "ai_circuit_open:openai",
+    "resolved",
+    6
+   ],
+   [
+    "ai_circuit_open",
+    "ai_circuit_open:groq",
+    "resolved",
+    6
+   ],
+   [
+    "slo_availability_burn",
+    "slo_availability_burn",
+    "open",
+    14
+   ],
+   [
+    "ai_all_providers_down",
+    "ai_all_providers_down",
+    "resolved",
+    1
+   ],
+   [
+    "ai_circuit_open",
+    "ai_circuit_open:openai",
+    "resolved",
+    1
+   ],
+   [
+    "ai_circuit_open",
+    "ai_circuit_open:groq",
+    "resolved",
+    1
+   ],
+   [
+    "redis_unavailable",
+    "redis_unavailable",
+    "resolved",
+    8
+   ],
+   [
+    "slo_breach",
+    "slo_breach:ai_success",
+    "resolved",
+    5
+   ],
+   [
+    "slo_availability_burn",
+    "slo_availability_burn",
+    "resolved",
+    5
+   ],
+   [
+    "ai_circuit_open",
+    "ai_circuit_open:openai",
+    "resolved",
+    1
+   ]
+  ],
+  "redis_outage_alerts": [
+   [
+    "firing",
+    "redis_unavailable",
+    "critical"
+   ],
+   [
+    "resolved",
+    "slo_availability_burn",
+    "critical"
+   ],
+   [
+    "resolved",
+    "slo_breach",
+    "warning"
+   ]
+  ],
+  "after_redis_restore": [
+   [
+    "firing",
+    "redis_unavailable",
+    "critical"
+   ],
+   [
+    "resolved",
+    "slo_availability_burn",
+    "critical"
+   ],
+   [
+    "resolved",
+    "slo_breach",
+    "warning"
+   ],
+   [
+    "resolved",
+    "redis_unavailable",
+    "critical"
+   ]
+  ],
+  "ready_after_redis_restore": {
+   "success": true,
+   "status": "ready",
+   "checks": {
+    "database": true,
+    "redis": true
+   },
+   "degraded": []
+  },
+  "receiver_down": {
+   "new_deliveries": 0,
+   "alert_delivery_metric": [
+    "qs_alert_delivery_window{outcome=\"failed\"} 3",
+    "qs_alert_delivery_window{outcome=\"ok\"} 1"
+   ],
+   "app_still_serves": 200,
+   "incident_rows_open": [
+    [
+     "ai_all_providers_down",
+     "open"
+    ],
+    [
+     "ai_circuit_open",
+     "open"
+    ],
+    [
+     "ai_circuit_open",
+     "open"
+    ]
+   ]
+  },
+  "payload_leaks": [],
+  "deliveries_per_(status,alert)": {
+   "firing:slo_availability_burn": 1,
+   "firing:ai_circuit_open": 2,
+   "firing:ai_all_providers_down": 1,
+   "firing:slo_breach": 1,
+   "resolved:ai_all_providers_down": 1,
+   "resolved:ai_circuit_open": 2,
+   "firing:redis_unavailable": 1,
+   "resolved:slo_availability_burn": 1,
+   "resolved:slo_breach": 1,
+   "resolved:redis_unavailable": 1
+  },
+  "sample_payload": {
+   "source": "querysure",
+   "environment": "production",
+   "status": "firing",
+   "alert": "slo_availability_burn",
+   "severity": "critical",
+   "component": "api",
+   "summary": "Availability error budget burning fast (short 120.0x, long 120.0x)",
+   "incident_id": "6a3f47cf-127f-47b4-a368-5b77ef34b61a",
+   "detail": {
+    "slo": "availability",
+    "burn_short": 120.0,
+    "burn_long": 120.0,
+    "threshold": 14.4
+   },
+   "at": "2026-10-05T09:51:06.031144+00:00"
+  }
+ }
+}

@@ -1,0 +1,511 @@
+[
+  {
+    "case": "A groq primary 500 -> groq fallback model ok",
+    "modes": {
+      "groq:llama-3.3-70b-versatile": "500"
+    },
+    "status": 200,
+    "error_code": null,
+    "error": null,
+    "latency_ms": 721,
+    "provider_used": "groq:llama-3.1-8b-instant",
+    "fallback_used": null,
+    "validation_valid": null,
+    "_leak_resp": [],
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 2,
+      "groq:llama-3.1-8b-instant": 1
+    },
+    "delta": {
+      "requests": 1,
+      "cost_cents": 0.00506,
+      "queries": 0,
+      "redis": {
+        "querysure:global_budget:2026-10-04": [
+          "0.509499999999997",
+          "0.514559999999997"
+        ],
+        "querysure:budget:4f450adf-d098-4cb1-9fc3-94c527024f2b:2026-10-04": [
+          null,
+          "0.00506"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed"
+    },
+    "ops_provider_failures": {
+      "groq": {
+        "server_error": 1
+      }
+    },
+    "ops_ai": {
+      "requests": 1,
+      "success": 1,
+      "failure": 0,
+      "fallbacks": 1,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "B groq 429 (both models) -> openai ok",
+    "modes": {
+      "groq": "429"
+    },
+    "status": 200,
+    "error_code": null,
+    "error": null,
+    "latency_ms": 2494,
+    "provider_used": "openai:gpt-4o-mini",
+    "fallback_used": null,
+    "validation_valid": null,
+    "_leak_resp": [],
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 2,
+      "groq:llama-3.1-8b-instant": 2,
+      "openai:gpt-4o-mini": 1
+    },
+    "delta": {
+      "requests": 1,
+      "cost_cents": 0.0177,
+      "queries": 0,
+      "redis": {
+        "querysure:global_budget:2026-10-05": [
+          "0",
+          "0.017699999999999"
+        ],
+        "querysure:budget:0a47912f-ddb6-4a63-b1df-9d82a410e680:2026-10-05": [
+          null,
+          "0.017699999999999"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed",
+      "openai": "closed"
+    },
+    "ops_provider_failures": {
+      "groq": {
+        "rate_limited": 2
+      },
+      "openai": {}
+    },
+    "ops_ai": {
+      "requests": 1,
+      "success": 1,
+      "failure": 0,
+      "fallbacks": 1,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "C groq timeout (both models) -> openai ok",
+    "modes": {
+      "groq": "timeout"
+    },
+    "status": 200,
+    "error_code": null,
+    "error": null,
+    "latency_ms": 9456,
+    "provider_used": "openai:gpt-4o-mini",
+    "fallback_used": null,
+    "validation_valid": null,
+    "_leak_resp": [],
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 2,
+      "groq:llama-3.1-8b-instant": 2,
+      "openai:gpt-4o-mini": 1
+    },
+    "delta": {
+      "requests": 1,
+      "cost_cents": 0.0177,
+      "queries": 0,
+      "redis": {
+        "querysure:global_budget:2026-10-04": [
+          "0.532259999999996",
+          "0.549959999999995"
+        ],
+        "querysure:budget:1fc9e108-05fb-461e-941b-491f0320484d:2026-10-04": [
+          null,
+          "0.017699999999999"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed",
+      "openai": "closed"
+    },
+    "ops_provider_failures": {
+      "openai": {}
+    },
+    "ops_ai": {
+      "requests": 1,
+      "success": 1,
+      "failure": 0,
+      "fallbacks": 1,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "D malformed output from every provider",
+    "modes": {
+      "groq": "malformed",
+      "openai": "malformed"
+    },
+    "status": 502,
+    "error_code": "GENERATION_FAILED",
+    "error": "SQL generation failed: every configured AI provider was unavailable or returned an error. Please try again in a moment.",
+    "latency_ms": 211,
+    "provider_used": null,
+    "fallback_used": null,
+    "validation_valid": null,
+    "_leak_resp": [],
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 2
+    },
+    "delta": {
+      "requests": 1,
+      "cost_cents": 0.11726,
+      "queries": 0,
+      "redis": {
+        "querysure:budget:73581783-6b14-4390-8c33-a36e109588fe:2026-10-04": [
+          null,
+          "0.1172599999999995"
+        ],
+        "querysure:global_budget:2026-10-04": [
+          "0.549959999999995",
+          "0.6672199999999945"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed"
+    },
+    "ops_provider_failures": {
+      "none": {}
+    },
+    "ops_ai": {
+      "requests": 1,
+      "success": 0,
+      "failure": 1,
+      "fallbacks": 0,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "E repair failure (bad SQL, every repair attempt malformed)",
+    "modes": {
+      "groq": "badsql_then_garbage",
+      "groq:llama-3.1-8b-instant": "malformed",
+      "openai": "malformed"
+    },
+    "status": 200,
+    "error_code": null,
+    "error": null,
+    "latency_ms": 276,
+    "provider_used": "groq:llama-3.3-70b-versatile",
+    "fallback_used": null,
+    "validation_valid": null,
+    "_leak_resp": [],
+    "execute_invalid_sql_status": 422,
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 5
+    },
+    "delta": {
+      "requests": 2,
+      "cost_cents": 0.29315,
+      "queries": 0,
+      "redis": {
+        "querysure:budget:055f4db1-878f-4120-a706-3af90f74dc1a:2026-10-04": [
+          null,
+          "0.2931499999999995"
+        ],
+        "querysure:global_budget:2026-10-04": [
+          "0.6672199999999945",
+          "0.960369999999994"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed"
+    },
+    "ops_provider_failures": {
+      "groq": {},
+      "none": {}
+    },
+    "ops_ai": {
+      "requests": 2,
+      "success": 1,
+      "failure": 1,
+      "fallbacks": 0,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "F all providers 5xx",
+    "modes": {
+      "groq": "500",
+      "openai": "500"
+    },
+    "status": 502,
+    "error_code": "GENERATION_FAILED",
+    "error": "SQL generation failed: every configured AI provider was unavailable or returned an error. Please try again in a moment.",
+    "latency_ms": 1816,
+    "provider_used": null,
+    "fallback_used": null,
+    "validation_valid": null,
+    "_leak_resp": [],
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 2,
+      "groq:llama-3.1-8b-instant": 2,
+      "openai:gpt-4o-mini": 2
+    },
+    "delta": {
+      "requests": 0,
+      "cost_cents": 0.0,
+      "queries": 0,
+      "redis": {
+        "querysure:budget:f56ad6aa-671e-4055-a245-23a3fcd429c3:2026-10-04": [
+          null,
+          "0"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed",
+      "openai": "closed"
+    },
+    "ops_provider_failures": {
+      "none": {}
+    },
+    "ops_ai": {
+      "requests": 1,
+      "success": 0,
+      "failure": 1,
+      "fallbacks": 0,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "G all providers timeout (deadline)",
+    "modes": {
+      "groq": "timeout",
+      "openai": "timeout"
+    },
+    "status": 502,
+    "error_code": "GENERATION_FAILED",
+    "error": "SQL generation failed: every configured AI provider was unavailable or returned an error. Please try again in a moment.",
+    "latency_ms": 13813,
+    "provider_used": null,
+    "fallback_used": null,
+    "validation_valid": null,
+    "_leak_resp": [],
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 2,
+      "groq:llama-3.1-8b-instant": 2,
+      "openai:gpt-4o-mini": 2
+    },
+    "delta": {
+      "requests": 0,
+      "cost_cents": 0.0,
+      "queries": 0,
+      "redis": {
+        "querysure:budget:b2d0b51b-d63e-402b-8b04-769dcef88dad:2026-10-04": [
+          null,
+          "0"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed",
+      "openai": "closed"
+    },
+    "ops_provider_failures": {
+      "none": {}
+    },
+    "ops_ai": {
+      "requests": 1,
+      "success": 0,
+      "failure": 1,
+      "fallbacks": 0,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "H breaker open -> skip -> half-open recovery",
+    "modes": {
+      "groq": "500",
+      "openai": "500"
+    },
+    "status": 502,
+    "failures_seq": [
+      {
+        "i": 0,
+        "status": 502,
+        "ms": 1806
+      },
+      {
+        "i": 1,
+        "status": 502,
+        "ms": 1539
+      },
+      {
+        "i": 2,
+        "status": 502,
+        "ms": 900
+      },
+      {
+        "i": 3,
+        "status": 502,
+        "ms": 471
+      },
+      {
+        "i": 4,
+        "status": 502,
+        "ms": 469
+      }
+    ],
+    "calls_made_while_all_open": {
+      "groq:llama-3.3-70b-versatile": 0,
+      "groq:llama-3.1-8b-instant": 0,
+      "openai:gpt-4o-mini": 0
+    },
+    "states_when_open": {
+      "groq": "open",
+      "openai": "open"
+    },
+    "recovery_status": 200,
+    "states_after_recovery": {
+      "groq": "closed",
+      "openai": "half_open"
+    },
+    "circuit_events": {
+      "circuit_closed": 1,
+      "circuit_opened": 2
+    },
+    "latency_ms": 13,
+    "error_code": "GENERATION_FAILED",
+    "_leak_resp": [],
+    "stub_calls": {
+      "groq:llama-3.3-70b-versatile": 7,
+      "groq:llama-3.1-8b-instant": 4,
+      "openai:gpt-4o-mini": 10
+    },
+    "delta": {
+      "requests": 1,
+      "cost_cents": 0.05863,
+      "queries": 0,
+      "redis": {
+        "querysure:global_budget:2026-10-04": [
+          "0.960369999999994",
+          "1.018999999999994"
+        ],
+        "querysure:budget:d123514e-e577-4f32-a0ee-f00920f0c345:2026-10-04": [
+          null,
+          "0.05863"
+        ]
+      }
+    },
+    "breakers": {
+      "groq": "closed",
+      "openai": "half_open"
+    },
+    "ops_provider_failures": {
+      "groq": {
+        "server_error": 5
+      },
+      "none": {}
+    },
+    "ops_ai": {
+      "requests": 7,
+      "success": 1,
+      "failure": 6,
+      "fallbacks": 0,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  },
+  {
+    "case": "I query-slot refund when execution fails",
+    "modes": {},
+    "first_status": 200,
+    "queries_after_success": 1,
+    "failed_status": 400,
+    "queries_after_failure": 1,
+    "failed_body_error": "file is not a database",
+    "ops_query_slots": {
+      "refunded": 1,
+      "reserved": 2
+    },
+    "_leak_resp": [],
+    "stub_calls": {},
+    "delta": {
+      "requests": 0,
+      "cost_cents": 0.0,
+      "queries": 1,
+      "redis": {}
+    },
+    "breakers": {},
+    "ops_provider_failures": {},
+    "ops_ai": {
+      "requests": 0,
+      "success": 0,
+      "failure": 0,
+      "fallbacks": 0,
+      "deadline_exceeded": 0
+    },
+    "leaked_canaries": {
+      "response": [],
+      "log": [],
+      "ops": []
+    },
+    "log_has_5xx_unhandled": false
+  }
+]

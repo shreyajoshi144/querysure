@@ -1,0 +1,15 @@
+fakeredis[lua]==2.31.3      # test-only; [lua] runs the real Redis Lua scripts (lease + budget) in tests
+pytest==9.0.3
+moto[s3]==5.2.3            # in-memory fake S3 for tests/test_storage.py
+httpx==0.28.1              # REQUIRED by fastapi.testclient.TestClient in newer FastAPI/Starlette
+pyyaml==6.0.3              # test-only, parses render.yaml in tests/test_sample_database_provisioning.py
+deepeval==4.2.6
+ruff==0.11.2
+pip-audit==2.8.0
+
+locust==2.32.10
+
+# frontend build (scripts/build_static.py); also in requirements-build.txt
+rjsmin==1.2.5
+rcssmin==1.2.2
+aiohttp==3.14.4

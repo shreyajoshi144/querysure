@@ -1,0 +1,310 @@
+databases:
+  - name: querysure-db
+    plan: free
+    databaseName: querysure
+    user: querysure
+
+services:
+  - type: web
+    name: querysure-api
+    runtime: python
+    plan: free
+    healthCheckPath: /api/health
+    # GAP FIXED (IMP-6): /api/connect/sample used to 400 on every fresh
+    # deploy -- retail.db isn't committed to the repo, and nothing generated
+    # it here. create_retail.py seeds Python's `random` with a fixed value,
+    # so this is deterministic and reproducible across every build.
+    buildCommand: "pip install -r requirements.txt -r requirements-build.txt && python create_retail.py && python scripts/build_static.py"
+    # Sprint 1 correction: migrations now run as part of every deploy,
+    # before the app process starts serving traffic. db.py's init_db()
+    # (create_all) is development-only as of this change -- production
+    # schema changes go through Alembic (migrations/), and this is what
+    # actually applies them. If `alembic upgrade head` fails, the deploy
+    # fails before uvicorn ever starts, rather than starting against a
+    # stale/partial schema.
+    startCommand: 'alembic upgrade head && uvicorn api:app --host 0.0.0.0 --port $PORT --workers ${WEB_CONCURRENCY:-2} --proxy-headers --forwarded-allow-ips="$TRUSTED_PROXY_IPS"'
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8   # matches the Dockerfile base image
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: querysure-db
+          property: connectionString
+      # Sprint 4: ops access + alerting. Both are secrets/operator choices, so they are never defaulted here.
+      - key: ADMIN_EMAILS
+        sync: false          # comma-separated verified accounts allowed on /ops. Unset = nobody.
+      - key: ALERT_WEBHOOK_URL
+        sync: false          # https only in production; alerts are always also logged + stored as incidents.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false          # REQUIRED. config.py refuses to start in production if this is
+                              # still "*" (the local-dev default) -- set it manually here to
+                              # your real frontend origin(s), comma-separated if more than one
+                              # (e.g. https://app.example.com). There's deliberately no `value:`
+                              # default anymore: an unset var falls through to config.py's own
+                              # "*" default, which is exactly the case the startup guard exists
+                              # to catch, so the first deploy fails loudly instead of silently
+                              # accepting requests from any origin.
+      # --- Billing (Sprint 5). Leave PAYMENT_PROVIDER unset to run Free-only: checkout then returns BILLING_NOT_CONFIGURED.
+      # Setting it requires a registered adapter (see docs/BILLING.md) and PAYMENT_WEBHOOK_SECRETS.
+      - key: PAYMENT_PROVIDER
+        sync: false
+      - key: PAYMENT_WEBHOOK_SECRETS
+        sync: false
+      - key: PAYMENT_CHECKOUT_URL
+        sync: false
+      - key: PAYMENT_CHECKOUT_SIGNING_SECRET
+        sync: false
+      - key: PAYMENT_PORTAL_URL
+        sync: false
+      - key: BILLING_PLAN_MAP_JSON
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: smtp
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: TRUSTED_PROXY_IPS
+        sync: false
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: THREADPOOL_MAX_WORKERS
+        value: "20"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "5"
+      - key: DB_POOL_TIMEOUT
+        value: "10"
+      - key: DB_POOL_RECYCLE
+        value: "1800"
+      - key: CONCURRENCY_GENERATE_SQL
+        value: "2"
+      - key: CONCURRENCY_UPLOAD
+        value: "1"
+      - key: CONCURRENCY_EXECUTE_SQL
+        value: "1"
+      - key: MAX_INGEST_ROWS
+        value: "1000000"
+      - key: MAX_INGEST_COLUMNS
+        value: "200"
+      - key: MAX_INGEST_SHEETS
+        value: "20"
+      - key: MAX_XLSX_UNCOMPRESSED_MB
+        value: "512"
+      - key: MAX_XLSX_COMPRESSION_RATIO
+        value: "100"
+      - key: CSP_REPORT_ONLY
+        value: "0"
+      - key: DAILY_LLM_BUDGET_USD
+        value: "2.00"
+      # REQUIRED in production (config.py refuses to start without it): shared, atomic counters for rate limiting and the
+      # daily LLM budget, plus the RQ queue the worker consumes. Wired to the Render Key Value instance declared at the
+      # bottom of this file (internal URL; the instance accepts no outside connections).
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: querysure-redis
+          property: connectionString
+      # --- Uploaded-dataset storage (REQUIRED in production) ---
+      # Render's disk is ephemeral: files written to ./uploads vanish on every
+      # restart/redeploy, so config.py refuses to start in production without
+      # an S3-compatible bucket. Works with AWS S3, Cloudflare R2, Backblaze B2.
+      - key: S3_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_REGION
+        sync: false          # optional (e.g. ap-south-1); "auto" for Cloudflare R2
+      - key: S3_ENDPOINT_URL
+        sync: false          # optional; only for non-AWS providers (R2/B2/MinIO)
+      - key: GROQ_API_KEY
+        sync: false          # set manually in Render dashboard -- never commit real keys
+      - key: OPENAI_API_KEY
+        sync: false          # optional fallback provider
+      - key: ANTHROPIC_API_KEY
+        sync: false          # optional fallback provider
+
+  # Background workers are NOT available on Render's free plan (free instance types exist only for web services, Postgres
+  # and Key Value), so a `plan: free` worker makes the blueprint invalid. Without this worker nothing sends the
+  # verification / password-reset e-mails and no upload is ingested, so it is not optional.
+  - type: worker
+    name: querysure-worker
+    runtime: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt && python create_retail.py"
+    startCommand: "python worker.py"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8   # matches the Dockerfile base image
+      # Must be the SAME secret as the web service: tokens/links signed by one
+      # process are verified by another. generateValue here would mint a different key.
+      - key: JWT_SECRET_KEY
+        fromService:
+          type: web
+          name: querysure-api
+          envVarKey: JWT_SECRET_KEY
+      - key: DATABASE_URL
+        fromDatabase:
+          name: querysure-db
+          property: connectionString
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: smtp
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: TRUSTED_PROXY_IPS
+        sync: false
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: THREADPOOL_MAX_WORKERS
+        value: "20"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "5"
+      - key: DB_POOL_TIMEOUT
+        value: "10"
+      - key: DB_POOL_RECYCLE
+        value: "1800"
+      - key: CONCURRENCY_GENERATE_SQL
+        value: "2"
+      - key: CONCURRENCY_UPLOAD
+        value: "1"
+      - key: CONCURRENCY_EXECUTE_SQL
+        value: "1"
+      - key: MAX_INGEST_ROWS
+        value: "1000000"
+      - key: MAX_INGEST_COLUMNS
+        value: "200"
+      - key: MAX_INGEST_SHEETS
+        value: "20"
+      - key: MAX_XLSX_UNCOMPRESSED_MB
+        value: "512"
+      - key: MAX_XLSX_COMPRESSION_RATIO
+        value: "100"
+      - key: CSP_REPORT_ONLY
+        value: "0"
+      - key: DAILY_LLM_BUDGET_USD
+        value: "2.00"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: querysure-redis
+          property: connectionString
+      - key: S3_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+
+  # Periodic maintenance (Sprint 5): downgrades paid accounts whose billing period + grace ended with no renewal event
+  # (fail closed), expires stale checkouts, purges dead auth sessions. Idempotent; see docs/OPERATIONS.md.
+  - type: cron
+    name: querysure-maintenance
+    runtime: python
+    plan: starter
+    schedule: "*/30 * * * *"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python scripts/maintenance.py"
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8   # matches the Dockerfile base image
+      # Must be the SAME secret as the web service: tokens/links signed by one
+      # process are verified by another. generateValue here would mint a different key.
+      - key: JWT_SECRET_KEY
+        fromService:
+          type: web
+          name: querysure-api
+          envVarKey: JWT_SECRET_KEY
+      - key: DATABASE_URL
+        fromDatabase:
+          name: querysure-db
+          property: connectionString
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: smtp
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: APP_BASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: TRUSTED_PROXY_IPS
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: querysure-redis
+          property: connectionString
+      - key: S3_BUCKET
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_REGION
+        sync: false
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: BILLING_GRACE_HOURS
+        value: "72"
+
+  # Redis-compatible store (rate limits, LLM-budget counters, RQ queue). `noeviction`: a full instance must reject writes
+  # rather than silently drop queued jobs. Empty allow-list = reachable only from services in the same Render region/account
+  # over the private network. The free plan is not persistent: a restart empties the queue (stale jobs are reaped and
+  # users can retry) -- use a paid plan if that is not acceptable.
+  - type: keyvalue
+    name: querysure-redis
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []

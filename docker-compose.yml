@@ -1,0 +1,125 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      # Credentials come from .env (read by Compose for ${...} substitution; never committed). Compose stops with a
+      # clear message when one is missing instead of falling back to a password written in this file.
+      POSTGRES_USER: ${POSTGRES_USER:-querysure}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}
+      POSTGRES_DB: ${POSTGRES_DB:-querysure}
+    ports:
+      - "127.0.0.1:5432:5432"   # host-only: never expose the development database on the LAN
+    volumes:
+      - querysure_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U querysure"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"   # host-only (no auth on this dev Redis)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "5001:5000"
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-querysure}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}@db:5432/${POSTGRES_DB:-querysure}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env (copy .env.example)}
+      # Default "dev": verification / reset e-mails are written to /app/.dev_mail inside the container instead of failing every
+      # registration with "SMTP not configured". Set EMAIL_PROVIDER=smtp plus the SMTP_* values to send real mail.
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-dev}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5001}
+      CORS_ALLOWED_ORIGINS: "*"
+      DAILY_LLM_BUDGET_USD: "2.00"
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
+      GROQ_FALLBACK_MODEL: ${GROQ_FALLBACK_MODEL:-openai/gpt-oss-20b}
+      OPENAI_FALLBACK_MODEL: ${OPENAI_FALLBACK_MODEL:-gpt-4o-mini}
+      ANTHROPIC_FALLBACK_MODEL: ${ANTHROPIC_FALLBACK_MODEL:-claude-haiku-4-5-20251001}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # python:slim ships no curl, so the previous curl probe could never pass and the service stayed "unhealthy".
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    # Sprint 1 blocker fix: this previously bind-mounted the host source
+    # tree over the image's /app (`- .:/app`), which meant `docker compose
+    # up` never actually ran the image that `build:` produced -- it ran
+    # whatever was on the host filesystem at that moment, with the image's
+    # pip-installed layer underneath it. That's fine for a live-reload dev
+    # setup but wrong for the goal here, which is verifying the built
+    # image itself runs correctly (matching what Render actually deploys).
+    # Removing the bind mount doesn't lose the ephemeral-storage parity
+    # this used to argue for: with no volume at all, uploads/output live
+    # only in the container's writable layer and are gone on
+    # `docker compose down` (with or without `-v`), same as a Render
+    # redeploy -- if anything this is closer to prod than the bind mount
+    # was, since a host-mounted directory would have made uploads persist
+    # *past* a container recreate, which Render does not do.
+
+  # Without a worker, queued jobs (verification / reset e-mails, dataset ingestion, reports) are never processed: registration
+  # would succeed but no e-mail is sent and uploads stay "queued" forever. Same image and settings as `api`; no HTTP port.
+  worker:
+    build: .
+    command: ["python", "worker.py"]
+    # The image HEALTHCHECK probes the API's HTTP port, which a worker does not serve (and the image has no curl), so it is
+    # replaced here. worker.py publishes a heartbeat key qs:g:worker:<hostname>:<pid> to Redis every 2 s with a 30 s TTL
+    # (observability/gauges.py); healthy = this container's worker heartbeat is present.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,socket,sys,redis; r=redis.Redis.from_url(os.environ['REDIS_URL'],socket_connect_timeout=3,socket_timeout=3); sys.exit(0 if next(r.scan_iter(match='qs:g:worker:'+socket.gethostname()+':*',count=100),None) else 1)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-querysure}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}@db:5432/${POSTGRES_DB:-querysure}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env (copy .env.example)}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-dev}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5001}
+      CORS_ALLOWED_ORIGINS: "*"
+      DAILY_LLM_BUDGET_USD: "2.00"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    # api creates the schema on first start (development create_all, now serialised by a Postgres advisory lock), so the
+    # worker waits for api to be healthy before touching the database.
+    restart: unless-stopped
+    # Dev e-mail (EMAIL_PROVIDER=dev) is written inside THIS container: docker compose exec worker sh -c 'cat .dev_mail/*.eml'
+
+volumes:
+  querysure_pgdata:

@@ -1,0 +1,152 @@
+{
+  "label": "workers_1",
+  "duration_s": 60,
+  "think_s": 1.0,
+  "cpu_count": 1,
+  "phases": [
+    {
+      "users": 100,
+      "wall_s": 95.9,
+      "requests": 3578,
+      "throughput_rps": 37.31,
+      "success_2xx": 3578,
+      "http_status": {
+        "200": 3457,
+        "202": 121
+      },
+      "server_errors_5xx": 0,
+      "rate_limited_429": 0,
+      "db_busy_503": 0,
+      "client_exceptions": {},
+      "client_latency_ms": {
+        "auth_me": {
+          "n": 75,
+          "p50_ms": 1652.9,
+          "p95_ms": 4342.9,
+          "p99_ms": 4909.5,
+          "max_ms": 4909.5,
+          "mean_ms": 2015.4
+        },
+        "create_session": {
+          "n": 100,
+          "p50_ms": 2837.3,
+          "p95_ms": 3437.1,
+          "p99_ms": 3506.6,
+          "max_ms": 3506.6,
+          "mean_ms": 2713.1
+        },
+        "execute_sql": {
+          "n": 47,
+          "p50_ms": 2436.6,
+          "p95_ms": 5094.0,
+          "p99_ms": 5659.0,
+          "max_ms": 5659.0,
+          "mean_ms": 2743.6
+        },
+        "generate_sql": {
+          "n": 126,
+          "p50_ms": 3479.4,
+          "p95_ms": 6051.5,
+          "p99_ms": 7918.9,
+          "max_ms": 8149.6,
+          "mean_ms": 3928.8
+        },
+        "job_poll": {
+          "n": 2942,
+          "p50_ms": 823.6,
+          "p95_ms": 3912.8,
+          "p99_ms": 4634.3,
+          "max_ms": 4874.7,
+          "mean_ms": 1360.1
+        },
+        "list_sessions": {
+          "n": 167,
+          "p50_ms": 1537.1,
+          "p95_ms": 4079.2,
+          "p99_ms": 4686.8,
+          "max_ms": 4715.6,
+          "mean_ms": 1891.3
+        },
+        "upload": {
+          "n": 121,
+          "p50_ms": 4304.0,
+          "p95_ms": 7236.7,
+          "p99_ms": 7602.0,
+          "max_ms": 7620.4,
+          "mean_ms": 4243.3
+        }
+      },
+      "job_upload_to_ready_ms": {
+        "n": 121,
+        "p50_ms": 43750.4,
+        "p95_ms": 76245.5,
+        "p99_ms": 78943.1,
+        "max_ms": 79476.9,
+        "mean_ms": 43449.6
+      },
+      "server_view": {
+        "http": {
+          "count": 3617,
+          "mean_ms": 1494.9,
+          "p50_ms": 1169.5,
+          "p95_ms": 4694.4,
+          "p99_ms": 7588.7
+        },
+        "5xx_rate_pct": 0.0,
+        "queue_wait": {
+          "count": 121,
+          "mean_ms": 37847.4,
+          "p50_ms": 39250.0,
+          "p95_ms": 60000.0,
+          "p99_ms": 60000.0
+        },
+        "job_duration": {
+          "count": 121,
+          "mean_ms": 712.2,
+          "p50_ms": 719.9,
+          "p95_ms": 972.0,
+          "p99_ms": 994.4
+        },
+        "ai": {
+          "requests": 126,
+          "latency": {
+            "count": 126,
+            "mean_ms": 1057.8,
+            "p50_ms": 920.0,
+            "p95_ms": 2396.9,
+            "p99_ms": 3950.0
+          },
+          "tokens": {
+            "input": 113400,
+            "output": 8820
+          },
+          "cost_usd": 0.0739
+        },
+        "slo_breaches": [
+          "api_latency_p95",
+          "queue_wait_p95"
+        ],
+        "degraded": [],
+        "pool_at_end": {
+          "processes": 3,
+          "max_utilization_pct": 10.0,
+          "avg_utilization_pct": 3.3,
+          "checked_out_total": 1,
+          "capacity_total": 30
+        }
+      },
+      "saturation": {
+        "pg_conns_max": 23,
+        "pg_active_max": 2,
+        "redis_ops_max": 426,
+        "redis_clients_max": 31,
+        "redis_mem_mb_max": 2.8,
+        "queue_depth_max": 88,
+        "stack_cpu_pct_avg": 42.7,
+        "host_cpu_pct_avg": 98.8,
+        "host_cpu_pct_max": 100.0,
+        "stack_rss_mb_max": 1315.4
+      }
+    }
+  ]
+}

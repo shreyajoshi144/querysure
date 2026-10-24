@@ -1,0 +1,156 @@
+{
+  "label": "workers_w2_u100",
+  "duration_s": 60,
+  "think_s": 1.0,
+  "cpu_count": 1,
+  "phases": [
+    {
+      "users": 100,
+      "wall_s": 66.6,
+      "requests": 1111,
+      "throughput_rps": 16.68,
+      "success_2xx": 1096,
+      "http_status": {
+        "200": 1002,
+        "202": 94,
+        "503": 15
+      },
+      "server_errors_5xx": 15,
+      "rate_limited_429": 0,
+      "db_busy_503": 15,
+      "client_exceptions": {},
+      "client_latency_ms": {
+        "auth_me": {
+          "n": 76,
+          "p50_ms": 4854.5,
+          "p95_ms": 6827.5,
+          "p99_ms": 7527.2,
+          "max_ms": 7527.2,
+          "mean_ms": 4768.9
+        },
+        "create_session": {
+          "n": 100,
+          "p50_ms": 2627.9,
+          "p95_ms": 3272.3,
+          "p99_ms": 3782.7,
+          "max_ms": 3782.7,
+          "mean_ms": 2625.4
+        },
+        "execute_sql": {
+          "n": 34,
+          "p50_ms": 5424.5,
+          "p95_ms": 7720.3,
+          "p99_ms": 8104.1,
+          "max_ms": 8104.1,
+          "mean_ms": 5482.5
+        },
+        "generate_sql": {
+          "n": 100,
+          "p50_ms": 7120.2,
+          "p95_ms": 9326.0,
+          "p99_ms": 10597.7,
+          "max_ms": 10597.7,
+          "mean_ms": 7312.0
+        },
+        "job_poll": {
+          "n": 488,
+          "p50_ms": 4585.9,
+          "p95_ms": 7102.4,
+          "p99_ms": 8004.4,
+          "max_ms": 8095.3,
+          "mean_ms": 4663.0
+        },
+        "list_sessions": {
+          "n": 204,
+          "p50_ms": 4743.7,
+          "p95_ms": 6609.1,
+          "p99_ms": 7291.9,
+          "max_ms": 8160.4,
+          "mean_ms": 4670.4
+        },
+        "upload": {
+          "n": 109,
+          "p50_ms": 8304.6,
+          "p95_ms": 11235.9,
+          "p99_ms": 11372.6,
+          "max_ms": 11526.9,
+          "mean_ms": 7315.6
+        }
+      },
+      "job_upload_to_ready_ms": {
+        "n": 94,
+        "p50_ms": 32418.7,
+        "p95_ms": 55594.0,
+        "p99_ms": 55998.3,
+        "max_ms": 55998.3,
+        "mean_ms": 32670.3
+      },
+      "server_view": {
+        "http": {
+          "count": 1130,
+          "mean_ms": 4596.9,
+          "p50_ms": 4258.8,
+          "p95_ms": 9538.8,
+          "p99_ms": 14863.6
+        },
+        "5xx_rate_pct": 1.327,
+        "queue_wait": {
+          "count": 94,
+          "mean_ms": 22610.2,
+          "p50_ms": 23076.9,
+          "p95_ms": 55137.9,
+          "p99_ms": 59027.6
+        },
+        "job_duration": {
+          "count": 94,
+          "mean_ms": 1239.4,
+          "p50_ms": 1750.0,
+          "p95_ms": 2425.0,
+          "p99_ms": 2485.0
+        },
+        "ai": {
+          "requests": 99,
+          "latency": {
+            "count": 99,
+            "mean_ms": 1459.1,
+            "p50_ms": 1741.5,
+            "p95_ms": 2531.2,
+            "p99_ms": 5050.0
+          },
+          "tokens": {
+            "input": 89100,
+            "output": 6930
+          },
+          "cost_usd": 0.058
+        },
+        "slo_breaches": [
+          "api_latency_p95",
+          "api_latency_p99",
+          "queue_wait_p95"
+        ],
+        "degraded": [
+          "db_pool"
+        ],
+        "pool_at_end": {
+          "processes": 4,
+          "max_utilization_pct": 100.0,
+          "avg_utilization_pct": 27.5,
+          "checked_out_total": 11,
+          "capacity_total": 40
+        }
+      },
+      "saturation": {
+        "pg_conns_max": 24,
+        "pg_active_max": 2,
+        "redis_ops_max": 315,
+        "redis_clients_max": 38,
+        "redis_mem_mb_max": 3.0,
+        "queue_depth_max": 67,
+        "stack_cpu_pct_avg": 39.4,
+        "host_cpu_pct_avg": 98.3,
+        "host_cpu_pct_max": 100.0,
+        "stack_rss_mb_max": 1594.1
+      }
+    }
+  ]
+}

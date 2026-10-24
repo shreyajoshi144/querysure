@@ -1,51 +1,39 @@
-# Python
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
-*.pyd
-
-# Virtual Environments
+.env
+*.db
 .venv/
 venv/
-env/
-
-# Environment Variables
-.env
-
-# IDE
-.vscode/
-.idea/
-
-# macOS
-.DS_Store
-
-# Logs
-*.log
-
-# Database (keep sample DB if needed)
-*.sqlite-shm
-*.sqlite-wal
-
-# Output Reports
-output/
-reports/
-exports/
-
-# Cache
-.cache/
 .pytest_cache/
-.mypy_cache/
+.DS_Store
+__MACOSX/
+node_modules/
 
-# Temporary Files
-temp/
-tmp/
-
-# Chroma / Vector DB (if added later)
-vector_db/
-
-# Uploaded Files
+.dev_mail/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
 uploads/
+.dev_mail/
+*.db
+reports/
+static/dist/
 
-# Build
-dist/
-build/
+# runtime data that must never be committed or shipped
+uploads/
+reports/
+dump.rdb
+static/dist/
+.env.*
+!.env.example
+.ruff_cache/
+
+# local-only files that must not reach the repository
+.idea/
+*.sqlite
+*.sqlite3
+.deepeval/
+# the owner's evaluation data (tests/test_v108_multiformat_eval.py skips without it; see evaluation/README.md)
+tests/fixtures/user/

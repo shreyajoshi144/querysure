@@ -241,6 +241,7 @@ def build_semantic_layer(schema: dict) -> dict:
         "metric_definitions": METRIC_DEFINITIONS,
         "table_business_names": {},
         "relationships_narrative": [],
+        "relationship_pairs": [],      # [from_table, to_table] for join-path expansion in retrieval
         "embedding_documents": [],
     }
 
@@ -329,6 +330,7 @@ def build_semantic_layer(schema: dict) -> dict:
         fb = semantic["table_business_names"].get(ft, ft)
         tb = semantic["table_business_names"].get(tt, tt)
         semantic["relationships_narrative"].append(f"Each {fb} record links to a {tb} via {rel['from_col']} -> {rel['to_col']}")
+        semantic["relationship_pairs"].append([ft, tt])
 
     return semantic
 

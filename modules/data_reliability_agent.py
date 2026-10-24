@@ -58,7 +58,7 @@ def _freshness_score(schema: dict, query_result: dict) -> Dict[str, Any]:
     cols = query_result.get("columns", [])
     matching = [m for m in ts_meta if m["column"] in cols or any(k in m["column"].lower() for k in ["date", "time", "created_at", "updated_at", "ship_date", "order_date"])]
     if not matching:
-        return {"score": 85, "status": "WARNING", "details": "No timestamp columns present in result for freshness validation."}
+        return {"score": 100, "status": "PASS", "details": "Not applicable: the result contains no date column (aggregated or non-temporal answer)."}
 
     latest_seen = None
     parsed = 0
@@ -70,15 +70,18 @@ def _freshness_score(schema: dict, query_result: dict) -> Dict[str, Any]:
                 latest_seen = dt if latest_seen is None else max(latest_seen, dt)
 
     if latest_seen is None:
-        return {"score": 80, "status": "WARNING", "details": "Timestamp values could not be parsed."}
+        return {"score": 100, "status": "PASS", "details": "Not applicable: date-like values in the result are periods (e.g. year/month), not record timestamps."}
 
+    # Uploaded CSV/Excel/SQLite files are point-in-time snapshots, often deliberately
+    # historical. Penalising a 2-year-old but complete dataset as "stale" produced a
+    # misleading warning on every historical question, so age is reported for
+    # information only and does not reduce the score.
     now = datetime.now(timezone.utc)
+    if latest_seen.tzinfo is None:
+        latest_seen = latest_seen.replace(tzinfo=timezone.utc)
     age_days = max(0, (now - latest_seen.astimezone(timezone.utc)).days)
-    penalty = min(age_days * 2, 60)
-    if parsed < max(1, len(query_result.get("rows", []))):
-        penalty += 5
-    score = max(0, 100 - penalty)
-    return {"score": score, "status": _status_from_score(score), "details": f"Latest timestamp age: {age_days} days."}
+    return {"score": 100, "status": "PASS",
+            "details": f"Informational: latest record in the result is dated {latest_seen.date().isoformat()} ({age_days} days ago); uploaded files are point-in-time snapshots."}
 
 def _completeness_score(query_result: dict) -> Dict[str, Any]:
     profile = query_result.get("result_profile", {})
@@ -116,15 +119,38 @@ def _integrity_score(schema: dict, validation_result: dict, query_result: dict) 
     return {"score": score, "status": _status_from_score(score), "details": f"Validation risk: {risk}."}
 
 
+_TIME_NAME_HINTS = ("date", "month", "year", "week", "quarter", "day", "period", "time")
+
+
+def _is_period_column(name: str) -> bool:
+    low = str(name).lower()
+    return any(h in low for h in _TIME_NAME_HINTS)
+
+
+def _has_time_axis(rows: List[dict], cols: List[str]) -> bool:
+    for c in cols:
+        if _is_period_column(c):
+            return True
+        vals = [r.get(c) for r in rows[:20] if isinstance(r.get(c), str)]
+        if vals and all(_parse_dt(v) is not None for v in vals):
+            return True
+    return False
+
+
 def _drift_score(schema: dict, query_result: dict) -> Dict[str, Any]:
     rows = query_result.get("rows", [])
     cols = query_result.get("columns", [])
     if not rows:
         return {"score": 100, "status": "PASS", "details": "No data to compare for drift."}
 
-    numeric = _safe_numeric_values(rows, cols)
+    # Drift only means something across time. For ranked / grouped / categorical results the
+    # mean-vs-median gap and spread are just the shape of the answer (a top-10 list is
+    # SUPPOSED to be skewed), so the check is not applicable there.
+    if not _has_time_axis(rows, cols):
+        return {"score": 100, "status": "PASS", "details": "Not applicable: result is not a time series (ranked/grouped/categorical answer)."}
+    numeric = {c: v for c, v in _safe_numeric_values(rows, cols).items() if v and not _is_period_column(c)}
     if not numeric:
-        return {"score": 80, "status": "WARNING", "details": "No numeric columns available for drift heuristics."}
+        return {"score": 100, "status": "PASS", "details": "Not applicable: no measure columns to compare over time."}
 
     drifts = []
     for c, vals in numeric.items():
@@ -155,8 +181,18 @@ def _uniqueness_score(query_result: dict) -> Dict[str, Any]:
     if row_count == 0 or not distinct_counts:
         return {"score": 85, "status": "WARNING", "details": "No uniqueness signal available."}
 
+    # Only label (non-numeric) columns should be unique in a grouped/ranked result.
+    # Measure columns legitimately repeat (many groups can share a count), and counting
+    # them dragged every aggregate answer toward a spurious WARNING.
+    numeric_cols = {c for c in query_result.get("columns", [])
+                       if query_result.get("rows") and all(
+                           isinstance(r.get(c), (int, float)) and not isinstance(r.get(c), bool) or r.get(c) is None
+                           for r in query_result["rows"])}
+    label_cols = {c: d for c, d in distinct_counts.items() if c not in numeric_cols and not _is_period_column(c)}
+    if row_count == 1 or not label_cols:
+        return {"score": 100, "status": "PASS", "details": "Not applicable: no label columns to check for duplicates."}
     ratios = []
-    for col, distinct in distinct_counts.items():
+    for col, distinct in label_cols.items():
         try:
             ratios.append(min(1.0, float(distinct) / max(1.0, float(row_count))))
         except Exception:
@@ -185,9 +221,33 @@ def assess_reliability(schema: dict, validation_result: dict, query_result: dict
         uniqueness["score"] * 0.13
     ))
 
+    # HONESTY: the score above measures process quality (nulls, validation, shape). It is NOT the probability that the
+    # answer is right. Answer correctness is reported separately and a failed independent check caps the score.
+    verification = (query_result or {}).get("verification") or None
+    v_status = (verification or {}).get("status")
+    capped_reason = None
+    sem = (query_result or {}).get("semantic_validation") or {}
+    if v_status in ("mismatch", "suspicious_empty") and reliability_score > 60:
+        reliability_score, capped_reason = 60, f"capped at 60 because the independent result check reported '{v_status}'"
+    elif sem.get("issues") and reliability_score > 74:
+        reliability_score, capped_reason = 74, "capped at 74 because the SQL does not fully match the question (semantic check)"
+    elif v_status not in ("verified_match", "empty_plausible") and reliability_score > 89:
+        # "High"/"PASS" is only earned by an answer that was independently re-computed and agreed; a clean process alone is not enough.
+        reliability_score, capped_reason = 89, "capped at 89 because the result was not independently verified"
+    try:
+        from .result_verifier import correctness_dimensions
+        dimensions = correctness_dimensions(validation_result or {}, (query_result or {}).get("semantic_validation"),
+                                            query_result, verification)
+    except Exception:  # noqa: BLE001
+        dimensions = None
+
     return {
         "reliability_score": reliability_score,
         "reliability_level": _level_from_score(reliability_score),
+        "score_meaning": "Process-quality score (completeness, validation, result shape). It is not a measure of answer accuracy; see 'dimensions.result_correctness'.",
+        "answer_verified": bool((verification or {}).get("verified")),
+        "capped_reason": capped_reason,
+        "dimensions": dimensions,
         "completeness": completeness,
         "freshness": freshness,
         "integrity": integrity,

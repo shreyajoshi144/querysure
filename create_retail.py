@@ -1,6 +1,6 @@
 """
-Creates sample_db/retail.db — a realistic e-commerce SQLite database.
-Run once: python sample_db/create_retail.py
+Creates retail.db — a deterministic sample e-commerce SQLite database.
+Run from the repository root: python create_retail.py
 """
 
 import sqlite3

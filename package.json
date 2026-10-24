@@ -1,0 +1,10 @@
+{
+  "name": "querysure-tests",
+  "private": true,
+  "description": "Dev-only Node dependency for tests/test_xss_escaping.py (exercises the real static/js/app.js render functions in jsdom). Not used at runtime -- the app itself ships no Node code.",
+  "devDependencies": {
+    "@sparticuz/chromium": "^153.0.0",
+    "jsdom": "^25.0.1",
+    "puppeteer-core": "^25.12.0"
+  }
+}

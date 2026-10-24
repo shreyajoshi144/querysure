@@ -1,6 +1,24 @@
-fastapi>=0.110.0
-uvicorn>=0.29.0
-python-dotenv>=1.0.0
-pandas>=2.0.0
-groq>=0.5.0
-python-multipart>=0.0.9
+fastapi==0.159.1
+starlette==1.9.0          # pinned explicitly: 0.41.x had published advisories (Range-header DoS, multipart limits, Host header)
+uvicorn[standard]==0.32.1
+python-multipart==0.0.31   # REQUIRED for File()/Form() uploads in api.py (/api/connect/upload) -- missing
+python-dotenv==1.2.2
+pandas==2.2.3
+openpyxl==3.1.5           # REQUIRED for .xlsx/.xlsm upload support (pd.read_excel engine)
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10    # only needed if DATABASE_URL points at Postgres (required in production -- see deploy notes)
+alembic==1.19.1            # migrations (migrations/) -- production runs `alembic upgrade head` before
+bcrypt==4.2.1
+PyJWT[crypto]==2.15.1
+email-validator==2.2.0     # REQUIRED by pydantic's EmailStr in auth.py -- pydantic raises ImportError
+slowapi==0.1.9
+redis==5.2.1               # REQUIRED in production (config.py refuses to start in production
+sqlglot==25.34.0
+groq==0.13.1
+openai==1.58.1
+anthropic==0.42.0
+reportlab==4.2.5
+boto3==1.43.103
+
+rq==2.1.0
+certifi==2026.10.19          # CA bundle for verified SMTP TLS (macOS python.org builds lack system CAs)
