@@ -2,13 +2,6 @@
 
 **Ask a question about your data in plain English. Get the answer, the SQL behind it, and a record of every check it passed or failed.**
 
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.159-009688?logo=fastapi&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis%20%2B%20RQ-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-1171%20passed%20(SQLite)-brightgreen)
-![pip-audit](https://img.shields.io/badge/pip--audit-no%20known%20vulnerabilities-brightgreen)
-
 ![QuerySure workflow view](docs/assets/02-workflow.jpg)
 <sub>Local run. The SQL in this screenshot came from the stub model used by the test suite; every other stage ran for real.</sub>
 
