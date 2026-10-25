@@ -179,8 +179,9 @@ def _run_report(db, job, payload):
 
 
 def _run_email(db, job, payload):
-    from email_provider import get_email_provider
-    get_email_provider().send(to=payload["to"], subject=payload["subject"], text=payload["text"], html=payload.get("html"))
+    from email_provider import get_email_provider, send_logged
+    send_logged(get_email_provider(), to=payload["to"], subject=payload["subject"], text=payload["text"],
+                html=payload.get("html"))
     return {"sent": True}
 
 
@@ -256,6 +257,10 @@ def _execute_job(job_id: str, payload: dict):
                 # input is consumed by the first attempt -- and would only mask the real,
                 # user-actionable message, so fail immediately.
                 if job.kind == "dataset_ingestion" and isinstance(exc, ValueError):
+                    break
+                # A rejected key, unverified sender or missing setting fails the same way every time: retrying only
+                # delays the failure (and, for SMTP, held a worker for up to a minute per message).
+                if job.kind == "auth_email" and getattr(exc, "transient", True) is False:
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
                     _update_job(db, job, status="retrying", error_code="JOB_RETRYING")
@@ -350,3 +355,41 @@ def enqueue_job(db, user_id: str, kind: str, payload: dict) -> Job:
         _execute_job(job.id, payload)
         db.refresh(job)
         return job
+
+
+_worker_seen = {"at": 0.0, "alive": False}
+WORKER_CHECK_SECONDS = 30.0
+
+
+def worker_alive() -> bool:
+    """A background worker published its heartbeat recently (cached for WORKER_CHECK_SECONDS)."""
+    now = time.monotonic()
+    if now - _worker_seen["at"] < WORKER_CHECK_SECONDS:
+        return _worker_seen["alive"]
+    try:
+        alive = any(str(d.get("proc", "")).startswith("worker:") for d in obs_gauges.read_all())
+    except Exception:  # noqa: BLE001
+        alive = False
+    _worker_seen.update(at=now, alive=alive)
+    return alive
+
+
+def dispatch_auth_email(db, user_id: str, payload: dict, background_tasks=None) -> str:
+    """Send a verification / reset e-mail without making the HTTP request wait for the mail server.
+
+    "queue": the background worker sends it (needs a running worker). "background": the web process sends it right
+    after the response is returned (FastAPI BackgroundTasks), for deployments without a worker such as Render's free
+    plan. "auto" (default): queue when a worker is alive, otherwise background. Either way the job row records the
+    outcome, the token is already stored, and the link is never written to the database or logs."""
+    import config as _cfg
+    mode = _cfg.AUTH_EMAIL_DELIVERY
+    if mode == "auto":
+        mode = "queue" if worker_alive() else "background"
+    if mode == "queue" or background_tasks is None:
+        enqueue_job(db, user_id, "auth_email", payload)
+        return "queue"
+    job = Job(id=str(uuid.uuid4()), user_id=user_id, kind="auth_email", status="queued", created_at=_now(), updated_at=_now())
+    db.add(job)
+    db.commit()
+    background_tasks.add_task(_execute_job, job.id, payload)
+    return "background"

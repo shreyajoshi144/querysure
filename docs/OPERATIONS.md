@@ -118,7 +118,11 @@ SMTP runs, so the web service never needs outbound mail ports.
    `uploads/`, `reports/`, `dump.rdb`, `node_modules/`). Render reads `render.yaml` from the repo root.
 2. **S3 bucket** (private): AWS S3 or Cloudflare R2. Create an access key limited to that bucket (get/put/delete/list).
    AWS: `S3_REGION=<region>`; R2: `S3_ENDPOINT_URL=https://<account>.r2.cloudflarestorage.com`, `S3_REGION=auto`.
-3. **SMTP account** (Gmail app password, SES, Postmark ...): host, port 587, username, password, and a verified `EMAIL_FROM`.
+3. **E-mail.** Render's free instances block outbound SMTP, so on the free plan use an HTTPS e-mail API: `EMAIL_PROVIDER=brevo`
+   (free tier; verify your sender address in Brevo, then create an API key) or `resend` (needs your own verified domain to mail
+   other people), plus `EMAIL_API_KEY` and `EMAIL_FROM`. On paid instances SMTP also works (host, port 587, username, password,
+   verified `EMAIL_FROM`). Without a worker (free plan), e-mails are sent by the web process right after the response
+   (`AUTH_EMAIL_DELIVERY=auto`, the default); with a worker they are queued.
 4. **Google OAuth client (optional; skip it and Google sign-in is simply hidden)**: Google Cloud Console -> APIs & Services -> Credentials -> *OAuth client ID* -> *Web application*.
    Add **Authorized JavaScript origins** = your exact app origin (`https://<service>.onrender.com`, plus your custom domain).
    No redirect URI and no client secret are used (Google Identity Services ID-token flow). Copy only the Client ID.

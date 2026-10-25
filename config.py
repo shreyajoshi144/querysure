@@ -93,18 +93,29 @@ SMTP_PORT = _env_number("SMTP_PORT", 587)
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "").strip()
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 EMAIL_FROM = os.environ.get("EMAIL_FROM", "").strip()
+# HTTPS e-mail APIs (EMAIL_PROVIDER=brevo or resend): used where outbound SMTP ports are blocked (Render's free instances).
+EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY", "").strip()
+# One bound for every e-mail network call (HTTPS request, or each SMTP step), so a dead mail server cannot hang a worker.
+EMAIL_TIMEOUT_SECONDS = max(1.0, min(30.0, _env_number("EMAIL_TIMEOUT_SECONDS", 10, float)))
+# How verification / reset e-mails leave: "queue" (background worker), "background" (sent by the web process right after
+# the response, for deployments without a worker), or "auto" (queue when a worker is alive, otherwise background).
+AUTH_EMAIL_DELIVERY = os.environ.get("AUTH_EMAIL_DELIVERY", "auto").strip().lower()
+if AUTH_EMAIL_DELIVERY not in {"auto", "queue", "background"}:
+    raise RuntimeError("AUTH_EMAIL_DELIVERY must be auto, queue or background.")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:5000").strip().rstrip("/")
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 PRODUCT_CONTACT_EMAIL = os.environ.get("PRODUCT_CONTACT_EMAIL", "").strip()
 
 if IS_PRODUCTION:
-    if EMAIL_PROVIDER.lower() != "smtp":
-        raise RuntimeError("EMAIL_PROVIDER must be smtp in production.")
-    if not all((SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_FROM, APP_BASE_URL)):
+    if EMAIL_PROVIDER not in {"smtp", "brevo", "resend"}:
+        raise RuntimeError("EMAIL_PROVIDER must be smtp, brevo or resend in production.")
+    if EMAIL_PROVIDER == "smtp" and not all((SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, EMAIL_FROM, APP_BASE_URL)):
         raise RuntimeError(
             "Production email authentication requires SMTP_HOST, SMTP_USERNAME, "
             "SMTP_PASSWORD, EMAIL_FROM, and APP_BASE_URL."
         )
+    if EMAIL_PROVIDER in {"brevo", "resend"} and not all((EMAIL_API_KEY, EMAIL_FROM, APP_BASE_URL)):
+        raise RuntimeError(f"EMAIL_PROVIDER={EMAIL_PROVIDER} requires EMAIL_API_KEY, EMAIL_FROM and APP_BASE_URL.")
     if not APP_BASE_URL.startswith("https://"):
         raise RuntimeError("Production APP_BASE_URL must use HTTPS for secure authentication links.")
     if not GOOGLE_CLIENT_ID:

@@ -63,7 +63,9 @@ services:
       - key: BILLING_PLAN_MAP_JSON
         sync: false
       - key: EMAIL_PROVIDER
-        value: smtp
+        sync: false          # brevo or resend on Render's free plan (it blocks outbound SMTP); smtp on paid plans
+      - key: EMAIL_API_KEY
+        sync: false          # API key for brevo / resend (never commit it)
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -169,7 +171,9 @@ services:
       - key: CORS_ALLOWED_ORIGINS
         sync: false
       - key: EMAIL_PROVIDER
-        value: smtp
+        sync: false          # brevo or resend on Render's free plan (it blocks outbound SMTP); smtp on paid plans
+      - key: EMAIL_API_KEY
+        sync: false          # API key for brevo / resend (never commit it)
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
@@ -264,7 +268,9 @@ services:
       - key: CORS_ALLOWED_ORIGINS
         sync: false
       - key: EMAIL_PROVIDER
-        value: smtp
+        sync: false          # brevo or resend on Render's free plan (it blocks outbound SMTP); smtp on paid plans
+      - key: EMAIL_API_KEY
+        sync: false          # API key for brevo / resend (never commit it)
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT

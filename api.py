@@ -36,7 +36,7 @@ from datetime import datetime, timezone, timedelta
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import Body, Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, Request, UploadFile
 from pydantic import BaseModel, model_validator
 from fastapi.exceptions import RequestValidationError
 from starlette.concurrency import run_in_threadpool
@@ -180,7 +180,7 @@ from auth import (
 )
 from db import EmailVerificationToken, PasswordResetToken
 from entitlements import DEFAULT_PLAN, daily_limit, get_plan
-from jobs import enqueue_job
+from jobs import dispatch_auth_email, enqueue_job
 from observability import context as obs_context, errors as obs_errors, events as obs_events, gauges as obs_gauges
 from observability import health as obs_health, metrics as obs_metrics
 from observability import alerts as obs_alerts
@@ -1236,13 +1236,16 @@ def _calc_health(schema: dict) -> int:
 
 @app.post("/api/auth/register", response_model=UserOut)
 @limiter.limit("3/minute")
-def register(request: Request, payload: UserCreate, db: OrmSession = Depends(get_db)):
+def register(request: Request, payload: UserCreate, background_tasks: BackgroundTasks, db: OrmSession = Depends(get_db)):
+    started = time.perf_counter()
     email = normalize_email(payload.email)
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         return err_response("An account with this email already exists.", code=409, error_code="ACCOUNT_EXISTS")
 
+    hash_started = time.perf_counter()
     user = User(email=email, hashed_password=hash_password(payload.password), email_verified=False, auth_version=0)
+    hash_ms = (time.perf_counter() - hash_started) * 1000
     raw_token, token_hash = new_token()
     verification = EmailVerificationToken(
         user_id=user.id or "", token_hash=token_hash,
@@ -1260,10 +1263,16 @@ def register(request: Request, payload: UserCreate, db: OrmSession = Depends(get
         db.commit()
         db.refresh(user)
         url = verification_url(raw_token)
-        enqueue_job(db, user.id, "auth_email", {
+        dispatch_started = time.perf_counter()
+        delivery = dispatch_auth_email(db, user.id, {
             "to": email, "subject": "Verify your QuerySure email",
             "text": "Verify your QuerySure account by opening this link:\n\n" + url + "\n\nThis link expires in 24 hours and can only be used once.",
-        })
+        }, background_tasks)
+        now = time.perf_counter()
+        # Timings only: no e-mail address, token or link. The e-mail itself is sent after this response.
+        logger.info("signup timing", extra={"event": "auth_signup_timing", "delivery": delivery,
+                                            "hash_ms": round(hash_ms), "dispatch_ms": round((now - dispatch_started) * 1000),
+                                            "total_ms": round((now - started) * 1000)})
     except Exception:
         db.rollback()
         logger.exception("Authentication email job creation failed during registration")
@@ -1335,7 +1344,7 @@ def verify_email(request: Request, token: str, db: OrmSession = Depends(get_db))
 
 @app.post("/api/auth/resend-verification")
 @limiter.limit("3/hour")
-def resend_verification(request: Request, payload: EmailRequest, db: OrmSession = Depends(get_db)):
+def resend_verification(request: Request, payload: EmailRequest, background_tasks: BackgroundTasks, db: OrmSession = Depends(get_db)):
     email = normalize_email(payload.email)
     user = db.query(User).filter(User.email == email).first()
     generic = {"success": True, "message": "If the account exists and needs verification, QuerySure will attempt to send a new verification email."}
@@ -1351,10 +1360,10 @@ def resend_verification(request: Request, payload: EmailRequest, db: OrmSession 
     ))
     try:
         db.commit()
-        enqueue_job(db, user.id, "auth_email", {
+        dispatch_auth_email(db, user.id, {
             "to": email, "subject": "Verify your QuerySure email",
             "text": "Verify your QuerySure account:\n\n" + verification_url(raw_token) + "\n\nThis link expires in 24 hours and can only be used once.",
-        })
+        }, background_tasks)
     except Exception:
         db.rollback()
         logger.exception("Authentication email job creation failed during verification resend")
@@ -1414,7 +1423,7 @@ def change_password(
 
 @app.post("/api/auth/forgot-password")
 @limiter.limit("3/hour")
-def forgot_password(request: Request, payload: EmailRequest, db: OrmSession = Depends(get_db)):
+def forgot_password(request: Request, payload: EmailRequest, background_tasks: BackgroundTasks, db: OrmSession = Depends(get_db)):
     email = normalize_email(payload.email)
     user = db.query(User).filter(User.email == email, User.is_active == 1).first()
     generic = {"success": True, "message": "If an account exists for that email, QuerySure will attempt to send password reset instructions."}
@@ -1430,10 +1439,10 @@ def forgot_password(request: Request, payload: EmailRequest, db: OrmSession = De
     ))
     try:
         db.commit()
-        enqueue_job(db, user.id, "auth_email", {
+        dispatch_auth_email(db, user.id, {
             "to": email, "subject": "Reset your QuerySure password",
             "text": "Reset your QuerySure password:\n\n" + password_reset_url(raw_token) + "\n\nThis link expires in 1 hour and can only be used once.",
-        })
+        }, background_tasks)
     except Exception:
         db.rollback()
         logger.exception("Authentication email job creation failed during password reset request")

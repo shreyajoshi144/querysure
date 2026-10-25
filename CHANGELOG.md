@@ -42,6 +42,19 @@
 - **Deterministic repair:** values written in double quotes (`= "Unadjusted"`) become string literals when they are not a
   table, column or alias, before any LLM repair round.
 
+### Slow sign-up and missing verification e-mails on Render's free plan
+- **Cause:** verification and reset e-mails were sent only by the background worker (a paid Render service), over SMTP, which
+  Render blocks on free instances; each blocked SMTP step waited 15 s and a failed e-mail was retried three times with
+  sleeps, even for permanent errors (bad credentials, missing settings).
+- `EMAIL_PROVIDER=brevo` or `resend` sends over HTTPS (port 443) with `EMAIL_API_KEY`; one bounded request
+  (`EMAIL_TIMEOUT_SECONDS`, default 10, also used for each SMTP step).
+- `AUTH_EMAIL_DELIVERY=auto` (default): e-mails are queued when a worker is alive, otherwise sent by the web process right
+  after the response, so sign-up never waits for the mail server and works without a worker. Tokens, expiry and one-time use
+  are unchanged.
+- Permanent e-mail failures are no longer retried; transient ones (timeouts, 429, 5xx) still are.
+- Logs record sign-up timings (hashing, dispatch, total) and each send's provider, outcome and duration, never the address,
+  link or token. `render.yaml` takes `EMAIL_PROVIDER` and `EMAIL_API_KEY` from the dashboard.
+
 ### Hierarchical statistics files (Stats NZ style)
 - **Cause of 22 of 35 wrong live answers:** in the Stats NZ CSV every figure exists at two industry levels (NZSIOC Level 1
   and Level 2, which add up to the same totals; 9 industries such as Mining appear at both) and in three versions

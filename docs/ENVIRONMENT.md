@@ -9,8 +9,8 @@ AWS credentials for the `s3` backend (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KE
 ## Production start-up guards
 
 With `ENVIRONMENT=production` the process **refuses to start** unless: `DATABASE_URL` is Postgres; `REDIS_URL` is set; `JWT_SECRET_KEY` is set and at least 16 characters
-(a warning is printed below 32; use `secrets.token_urlsafe(64)`); `CORS_ALLOWED_ORIGINS` is explicit (not `*`); `TRUSTED_PROXY_IPS` is explicit; `SMTP_HOST`, `SMTP_USERNAME`,
-`SMTP_PASSWORD`, `EMAIL_FROM` are set and `APP_BASE_URL` is https; **object storage is configured** (`S3_BUCKET`, with the `s3` backend);
+(a warning is printed below 32; use `secrets.token_urlsafe(64)`); `CORS_ALLOWED_ORIGINS` is explicit (not `*`); `TRUSTED_PROXY_IPS` is explicit; e-mail is configured (`smtp`: `SMTP_HOST`, `SMTP_USERNAME`,
+`SMTP_PASSWORD`, `EMAIL_FROM`; `brevo`/`resend`: `EMAIL_API_KEY`, `EMAIL_FROM`) and `APP_BASE_URL` is https; **object storage is configured** (`S3_BUCKET`, with the `s3` backend);
 and, if `PAYMENT_PROVIDER` is set, `PAYMENT_WEBHOOK_SECRETS` is set and `PAYMENT_CHECKOUT_URL` / `PAYMENT_PORTAL_URL` are https. The worker and
 the maintenance cron import the same config, so they need the same variables.
 
@@ -70,7 +70,10 @@ Read by `docker-compose.yml` for variable substitution, not by `config.py`. Comp
 | `AUTH_MAX_ACTIVE_SESSIONS` | `20` | Live sessions per user; the oldest are revoked beyond this. |
 | `AUTH_EMAIL_COOLDOWN_SECONDS` | `0` | Minimum seconds between two verification/reset e-mails for one account. Default 60 in production, 0 elsewhere. |
 | `GOOGLE_CLIENT_ID` | `''` | Google Identity Services client id. Optional: when unset, Google sign-in is hidden and email sign-in still works. |
-| `EMAIL_PROVIDER` | `'smtp'` | `smtp` (production) or `dev` (writes `.eml` files). |
+| `EMAIL_PROVIDER` | `'smtp'` | `smtp`, `brevo` or `resend` (HTTPS e-mail APIs, port 443: use one of these where outbound SMTP is blocked, as on Render's free instances), or `dev` (writes `.eml` files; not allowed in production). |
+| `EMAIL_API_KEY` | `''` | API key for `brevo` or `resend`. Required in production with those providers. |
+| `EMAIL_TIMEOUT_SECONDS` | `10` | Bound (1-30 s) for each e-mail network call: the HTTPS request, or each SMTP step. |
+| `AUTH_EMAIL_DELIVERY` | `'auto'` | `queue` (background worker sends), `background` (the web process sends right after the response; for deployments without a worker), or `auto` (queue when a worker heartbeat is live, otherwise background). Sign-up never waits for the mail server. |
 | `SMTP_HOST` | `''` | SMTP server (production). |
 | `SMTP_PORT` | `587` | SMTP port. |
 | `SMTP_USERNAME` | `''` | SMTP user. |
