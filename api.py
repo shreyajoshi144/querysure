@@ -180,7 +180,7 @@ from auth import (
 )
 from db import EmailVerificationToken, PasswordResetToken
 from entitlements import DEFAULT_PLAN, daily_limit, get_plan
-from jobs import dispatch_auth_email, enqueue_job
+from jobs import ACTIVE_STATUSES as ACTIVE_JOB_STATUSES, dispatch_auth_email, enqueue_job, fail_orphaned_jobs
 from observability import context as obs_context, errors as obs_errors, events as obs_events, gauges as obs_gauges
 from observability import health as obs_health, metrics as obs_metrics
 from observability import alerts as obs_alerts
@@ -1019,9 +1019,14 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # connect_upload() below, checked against Content-Length first (fast path,
 # rejects before reading anything) and against actual bytes read as a
 # backup (in case a client lies about Content-Length).
-MAX_UPLOAD_CSV_BYTES = 50 * 1024 * 1024    # 50 MB (also applies to .json)
-MAX_UPLOAD_DB_BYTES = 100 * 1024 * 1024    # 100 MB
-MAX_UPLOAD_XLSX_BYTES = 50 * 1024 * 1024   # 50 MB
+# MAX_UPLOAD_MB (default 10) lowers every format's ceiling: an upload job holds the whole dataset in memory, and a
+# 512 MB instance (Render free) runs it inside the web process when there is no worker.
+_MAX_UPLOAD_BYTES = _config_module.MAX_UPLOAD_MB * 1024 * 1024
+MAX_UPLOAD_CSV_BYTES = min(50 * 1024 * 1024, _MAX_UPLOAD_BYTES)    # at most 50 MB (also applies to .json)
+MAX_UPLOAD_DB_BYTES = min(100 * 1024 * 1024, _MAX_UPLOAD_BYTES)    # at most 100 MB
+MAX_UPLOAD_XLSX_BYTES = min(50 * 1024 * 1024, _MAX_UPLOAD_BYTES,
+                            _config_module.MAX_UPLOAD_XLSX_MB * 1024 * 1024)   # at most 50 MB; MAX_UPLOAD_XLSX_MB lowers it
+_MULTIPART_OVERHEAD_BYTES = 64 * 1024
 MAX_SQL_LENGTH = 20_000
 MAX_QUESTION_LENGTH = 4_000
 
@@ -1762,6 +1767,7 @@ def connect_sample(
 @limiter.limit("10/minute")
 def connect_upload(
     request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session_id: str = Form(None),
     current_user: User = Depends(get_current_user),
@@ -1776,7 +1782,9 @@ def connect_upload(
 
     size_limit = UPLOAD_SIZE_LIMITS[ext]
     declared_length = request.headers.get("content-length")
-    if declared_length and declared_length.isdigit() and int(declared_length) > size_limit:
+    # Content-Length covers the whole multipart body (boundaries, part headers, the session_id field), not just the file:
+    # allow that framing so a file just under the limit is not refused. The streamed byte count below is exact.
+    if declared_length and declared_length.isdigit() and int(declared_length) > size_limit + _MULTIPART_OVERHEAD_BYTES:
         limit_mb = size_limit // (1024 * 1024)
         return err_response(f"File too large. Maximum allowed size is {limit_mb} MB.", code=413)
 
@@ -1817,6 +1825,7 @@ def connect_upload(
         job = enqueue_job(
             db, current_user.id, "dataset_ingestion",
             {"object_ref": object_ref, "path": path, "ext": ext, "fname": fname, "session_id": row.id, "size": upload_size},
+            background_tasks,
         )
         return row.id, job.id
     try:
@@ -1841,6 +1850,9 @@ def get_job(job_id: str, current_user: User = Depends(get_current_user), db: Orm
     job = db.query(Job).filter(Job.id == job_id, Job.user_id == current_user.id).first()
     if not job:
         return err_response("Job not found.", code=404, error_code="JOB_NOT_FOUND")
+    # A job nothing can finish (lost in a restart, or queued with no worker running) is failed now, not left "queued".
+    if job.status in ACTIVE_JOB_STATUSES and fail_orphaned_jobs(db, job_id=job.id):
+        db.refresh(job)
     payload = {"success": True, "job_id": job.id, "status": job.status, "error_code": job.error_code}
     if job.result_ref:
         try:
@@ -2576,6 +2588,7 @@ def api_answer_trace(
 @limiter.limit("10/minute")
 def api_generate_report(
     request: Request,
+    background_tasks: BackgroundTasks,
     payload: ReportRequest | None = Body(default=None),
     current_user: User = Depends(get_current_user),
     db: OrmSession = Depends(get_db),
@@ -2584,7 +2597,7 @@ def api_generate_report(
     row = get_or_create_session(db, user_id=current_user.id, session_id=body.get("session_id"))
     if not (row.question and row.sql_result and row.validation and row.query_result and row.reliability and row.insights):
         return err_response("Run the full pipeline before generating a report")
-    job = enqueue_job(db, current_user.id, "report_generation", {"session_id": row.id})
+    job = enqueue_job(db, current_user.id, "report_generation", {"session_id": row.id}, background_tasks)
     return JSONResponse(status_code=202, content={"success": True, "job_id": job.id, "session_id": row.id})
 
 

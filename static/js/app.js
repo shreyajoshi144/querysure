@@ -2373,15 +2373,22 @@ async function ensureSession() {
   return true;
 }
 
+// The server always ends a job: succeeded, failed, or JOB_INTERRUPTED / JOB_STALE once nothing can finish it (at most about
+// 27 minutes). So keep polling past that instead of giving up after 3 minutes while a slow job (an Excel file on a 0.1-CPU
+// free instance takes minutes) is still working and would succeed.
+const JOB_POLL_LIMIT_MS = 30 * 60 * 1000;
+
 async function pollJob(jobId, label) {
-  for (let i = 0; i < 180; i++) {
+  const started = Date.now();
+  while (Date.now() - started < JOB_POLL_LIMIT_MS) {
     const res = await apiGet('/api/jobs/' + encodeURIComponent(jobId));
     if (!res.success) throwApiError(res, label + ' failed.');
     if (res.status === 'succeeded') return res.result || {};
     // The worker's reason ("Excel workbook is not a valid ZIP container.") tells the user what to fix; shown as text.
     if (res.status === 'failed') throw new Error(res.error ? `${label} failed: ${res.error}` : label + ' failed. Please try again.');
-    setPipelineState(label + ' · ' + (res.status || 'queued'));
-    await sleep(1000);
+    const secs = Math.round((Date.now() - started) / 1000);
+    setPipelineState(label + ' · ' + (res.status || 'queued') + ' · ' + secs + 's');
+    await sleep(secs < 60 ? 1000 : 3000);   // poll less often once it is clearly a long job (less load on a small instance)
   }
   throw new Error(label + ' timed out.');
 }

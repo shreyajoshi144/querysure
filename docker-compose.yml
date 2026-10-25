@@ -47,6 +47,13 @@ services:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5001}
       CORS_ALLOWED_ORIGINS: "*"
       DAILY_LLM_BUDGET_USD: "2.00"
+      # Web processes (the image's start command reads it). 1 matches Render's free plan; 2 is the local default.
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      # Largest upload in MB, any format. Upload / report jobs run on the worker below while it is up, otherwise in the
+      # API process (JOB_EXECUTION=auto); see docs/OPERATIONS.md "Render free demo mode".
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
+      MAX_UPLOAD_XLSX_MB: ${MAX_UPLOAD_XLSX_MB:-10}
+      JOB_EXECUTION: ${JOB_EXECUTION:-auto}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

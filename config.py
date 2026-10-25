@@ -54,6 +54,12 @@ MAX_INGEST_ROWS = max(1, _env_number("MAX_INGEST_ROWS", 1000000))
 MAX_INGEST_COLUMNS = max(1, _env_number("MAX_INGEST_COLUMNS", 200))
 MAX_INGEST_SHEETS = max(1, _env_number("MAX_INGEST_SHEETS", 20))
 MAX_XLSX_UNCOMPRESSED_MB = max(1, _env_number("MAX_XLSX_UNCOMPRESSED_MB", 512))
+# Largest accepted upload, any format (each format also has its own ceiling in api.py). The full upload job for a 10 MB file
+# peaks at roughly 140-360 MB RSS in one process (CSV/JSON/XLSX; SQLite far less), which fits one web process on 512 MB.
+MAX_UPLOAD_MB = max(1, _env_number("MAX_UPLOAD_MB", 10))
+# Excel parsing is far slower than CSV (openpyxl XML parsing): on a 0.1-CPU instance a 1 MB workbook took ~6 minutes and a 2 MB
+# one ~11 minutes. This lowers the Excel limit separately (the lower of the two applies); render.yaml sets 2 for the free plan.
+MAX_UPLOAD_XLSX_MB = max(1, _env_number("MAX_UPLOAD_XLSX_MB", MAX_UPLOAD_MB))
 MAX_XLSX_COMPRESSION_RATIO = max(1.0, _env_number("MAX_XLSX_COMPRESSION_RATIO", 100, float))
 CSP_REPORT_ONLY = os.environ.get("CSP_REPORT_ONLY", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -465,6 +471,21 @@ AI_MIN_CALL_BUDGET_SECONDS = max(0.5, _env_number("AI_MIN_CALL_BUDGET_SECONDS", 
 # Stale in-flight background jobs (worker killed / Redis flushed): failed and released after this long.
 # Must exceed the RQ job_timeout (15 minutes).
 JOB_STALE_SECONDS = max(1200, _env_number("JOB_STALE_SECONDS", 1500))
+# Where upload and report jobs run: "queue" (the RQ worker), "in_process" (the web process itself, right after the response,
+# for deployments without a worker such as Render's free plan), or "auto" (queue while a worker heartbeat is visible,
+# otherwise in_process). In-process jobs are NOT durable: a restart or crash loses them, and they are then failed with
+# JOB_INTERRUPTED (see JOB_ORPHAN_SECONDS) so the user can retry instead of waiting on a job nothing will finish.
+JOB_EXECUTION = os.environ.get("JOB_EXECUTION", "").strip().lower() or "auto"   # blank (unfilled Render key) = auto
+if JOB_EXECUTION not in {"auto", "queue", "in_process"}:
+    raise RuntimeError("JOB_EXECUTION must be auto, queue or in_process.")
+# How many heavy in-process jobs (uploads, reports) one web process runs at once; the rest wait. 1 keeps peak memory bounded.
+IN_PROCESS_JOB_CONCURRENCY = max(1, _env_number("IN_PROCESS_JOB_CONCURRENCY", 1))
+# With no worker alive, a queued/running job whose heartbeat is older than this has no process left to finish it: it is failed
+# as JOB_INTERRUPTED. In-process jobs refresh their heartbeat every JOB_HEARTBEAT_SECONDS, so a live one never reaches it.
+JOB_ORPHAN_SECONDS = max(30, _env_number("JOB_ORPHAN_SECONDS", 90))
+JOB_HEARTBEAT_SECONDS = max(1, _env_number("JOB_HEARTBEAT_SECONDS", 15))
+if JOB_HEARTBEAT_SECONDS * 3 > JOB_ORPHAN_SECONDS:
+    raise RuntimeError("JOB_ORPHAN_SECONDS must be at least three times JOB_HEARTBEAT_SECONDS.")
 WORKER_HEARTBEAT_INTERVAL_SECONDS = max(2, _env_number("WORKER_HEARTBEAT_INTERVAL_SECONDS", 10))
 WORKER_HEARTBEAT_TTL_SECONDS = max(5, _env_number("WORKER_HEARTBEAT_TTL_SECONDS", 30))
 

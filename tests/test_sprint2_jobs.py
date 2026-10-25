@@ -133,7 +133,7 @@ def test_upload_job_contract_has_durable_object_reference_not_api_path(client, a
         captured["staged_input"] = path
         captured["object_ref"] = f"s3://bucket/staging/{user_id}/00000000-0000-0000-0000-000000000000{ext}"
         return captured["object_ref"]
-    def enqueue(db, user_id, kind, payload):
+    def enqueue(db, user_id, kind, payload, background_tasks=None):
         captured["payload"] = payload
         class JobObj:
             id = "job-contract"

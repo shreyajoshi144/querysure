@@ -2,6 +2,31 @@
 
 ## Unreleased — final release package
 
+### Render free demo mode
+- **Uploads and reports no longer wait for a worker that does not exist.** In production every upload and PDF report went to
+  the RQ queue, and only the paid `querysure-worker` consumes it; on Render's free plan they stayed `queued` until the 25-minute
+  stale reaper failed them. With `JOB_EXECUTION=auto` (default) they now run in the web process right after the `202` response
+  whenever no worker heartbeat is visible, one heavy job at a time per process (`IN_PROCESS_JOB_CONCURRENCY=1`). These
+  in-process jobs are **not durable**: a restart loses them. Their rows carry a heartbeat, and with no worker alive a job whose
+  heartbeat is older than `JOB_ORPHAN_SECONDS` (90 s) is failed as `JOB_INTERRUPTED` with a retry message and its upload quota
+  released (on the next status poll and by the maintenance reaper), instead of staying `queued`. The same applies to a job
+  queued with `JOB_EXECUTION=queue` when no worker runs. A late worker never resurrects such a job.
+- **Configurable upload limit, default 10 MB** (`MAX_UPLOAD_MB`), below the existing per-format ceilings (50/50/100 MB).
+- **One web process on Render free.** `render.yaml` sets `WEB_CONCURRENCY=1`, `MAX_UPLOAD_MB=10`, `JOB_EXECUTION=auto` on the web
+  service; Compose now passes `WEB_CONCURRENCY`, `MAX_UPLOAD_MB` and `JOB_EXECUTION` from `.env` to the API container (the image's
+  start command already read `WEB_CONCURRENCY`; Compose never set it, so it was always 2).
+- **A late result never overwrites a reported failure.** A job failed as `JOB_INTERRUPTED`/`JOB_STALE` while its thread was
+  still working (found in a 0.1-CPU test: a 10 MB workbook parsed for over 25 minutes) now discards its result instead of
+  switching the user's dataset or marking itself succeeded; its stored objects are deleted.
+- **Excel limit** `MAX_UPLOAD_XLSX_MB` (default = `MAX_UPLOAD_MB`; `render.yaml` sets 2): at 0.1 CPU a 1 MB workbook took 345 s.
+- **The browser no longer gives up after 3 minutes.** `pollJob` waited 180 polls; a 10 MB CSV took 305 s at 0.1 CPU and the UI
+  said "timed out" although the job succeeded. It now waits up to 30 minutes (the server ends every job before then) and
+  shows the elapsed time.
+- **Files just under the limit were refused.** The fast `Content-Length` check compared the whole multipart body to the file
+  limit; it now allows 64 KiB of framing (the streamed byte count stays exact).
+- Measured under Render-free limits (512 MB, 0.1 CPU, one process, no worker): see OPERATIONS.md "Render free demo mode".
+- Tests: `tests/test_render_free_demo.py` (27). Docs: OPERATIONS.md "Render free demo mode", ENVIRONMENT.md, 02_ARCHITECTURE.md.
+
 ### Fixed
 - **Compose worker healthcheck.** The `worker` service probed `http://localhost:5000/api/health` with `curl`, but the image has
   no `curl` and the worker serves no HTTP, so it could never be healthy. It now checks for its own Redis heartbeat key

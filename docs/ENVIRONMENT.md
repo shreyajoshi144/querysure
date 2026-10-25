@@ -21,7 +21,7 @@ the maintenance cron import the same config, so they need the same variables.
 | `ENVIRONMENT` | `'development'` | `development` or `production`. `production` turns on every startup guard below (config.py refuses to start when one fails). |
 | `HOST` | `—` | Bind address for `python api.py` / `start.py` (not used by uvicorn when started with `--host`). |
 | `PORT` | `—` | Listen port for `start.py`. |
-| `WEB_CONCURRENCY` | `2` | Uvicorn worker processes per instance. Pool sizing must satisfy workers x (DB_POOL_SIZE + DB_MAX_OVERFLOW) < Postgres connection limit. |
+| `WEB_CONCURRENCY` | `2` | Uvicorn worker processes per instance (read by the Docker `CMD`, the Render start command and Compose). Pool sizing must satisfy workers x (DB_POOL_SIZE + DB_MAX_OVERFLOW) < Postgres connection limit. `render.yaml` sets `1` for the free plan (512 MB): each idle process holds about 135 MB. |
 | `THREADPOOL_MAX_WORKERS` | `20` | Size of the sync-endpoint thread pool per process. |
 | `APP_BASE_URL` | `'http://localhost:5000'` | Public https origin of the app; used in e-mail links and the billing return URL. Required in production. |
 | `CORS_ALLOWED_ORIGINS` | `['*']` | Comma-separated allowed origins. `*` is refused in production. |
@@ -107,6 +107,8 @@ Read by `docker-compose.yml` for variable substitution, not by `config.py`. Comp
 | `MAX_INGEST_COLUMNS` | `200` | Maximum columns. |
 | `MAX_INGEST_SHEETS` | `20` | Maximum sheets in a workbook. |
 | `MAX_XLSX_UNCOMPRESSED_MB` | `512` | Zip-bomb guard: maximum uncompressed workbook size. |
+| `MAX_UPLOAD_MB` | `10` | Largest upload in MB, any format (each format also keeps its own ceiling: CSV/JSON/Excel 50 MB, SQLite 100 MB). The upload job holds the dataset in memory: a 10 MB file peaks at about 135-360 MB in one process, see [OPERATIONS.md](OPERATIONS.md#render-free-demo-mode). |
+| `MAX_UPLOAD_XLSX_MB` | `10` (= `MAX_UPLOAD_MB`) | Lower limit for Excel (`.xlsx`/`.xlsm`) only; the lower of the two applies. Excel parsing is much slower than CSV: on 0.1 CPU a 1 MB workbook took about 6 minutes. `render.yaml` sets `2`. |
 | `MAX_XLSX_COMPRESSION_RATIO` | `100.0` | Zip-bomb guard: maximum compression ratio. |
 | `CONCURRENCY_GENERATE_SQL` | `2` | Concurrent SQL-generation requests per process. |
 | `CONCURRENCY_UPLOAD` | `1` | Concurrent uploads per process. |
@@ -114,6 +116,10 @@ Read by `docker-compose.yml` for variable substitution, not by `config.py`. Comp
 | `API_ADMISSION_LIMIT` | `16` | Global concurrent-request admission limit per process. |
 | `API_ADMISSION_WAIT_SECONDS` | `8.0` | How long a request waits for admission before a 503. |
 | `JOB_STALE_SECONDS` | `1500` | Age after which a running job is considered stale. |
+| `JOB_EXECUTION` | `'auto'` | Where upload and report jobs run: `queue` (the RQ worker), `in_process` (the web process, right after the response; for deployments without a worker), or `auto` (queue while a worker heartbeat is live, otherwise in-process; blank = auto). In-process jobs are **not durable**: a restart loses them and they are failed as `JOB_INTERRUPTED`. Any other value refuses to start. |
+| `IN_PROCESS_JOB_CONCURRENCY` | `1` | Heavy in-process jobs (uploads, reports) one web process runs at once; the rest wait their turn (bounds peak memory). |
+| `JOB_ORPHAN_SECONDS` | `90` | With no worker alive, a queued/running job whose heartbeat is older than this is failed as `JOB_INTERRUPTED` (on the next status poll, or by the maintenance reaper) and releases its upload quota. Minimum 30; must be at least 3 x `JOB_HEARTBEAT_SECONDS`. |
+| `JOB_HEARTBEAT_SECONDS` | `15` | How often a web process refreshes the heartbeat (`jobs.updated_at`) of its unfinished in-process jobs. |
 
 ## LLM providers & cost control
 
