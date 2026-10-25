@@ -273,6 +273,21 @@ def test_live_or_finished_jobs_are_never_failed(client, no_worker, monkeypatch, 
     assert _job(job_id).status in {"running", "succeeded"}
 
 
+def test_the_heartbeat_does_not_share_time_sleep_with_job_retries(monkeypatch):
+    # In CI a test that records jobs.time.sleep (retry back-off) also caught this thread's 15 s waits: [1, 2, 15, 15, ...].
+    sleeps, touches = [], []
+    monkeypatch.setattr(jobs.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(config, "JOB_HEARTBEAT_SECONDS", 0.01)
+    monkeypatch.setattr(jobs, "touch_inflight_jobs", lambda: touches.append(1) or 0)
+    stop = threading.Event()
+    t = threading.Thread(target=jobs._heartbeat_loop, args=(stop,))
+    t.start()
+    threading.Event().wait(0.2)                       # not time.sleep: it is patched (time is one shared module)
+    stop.set()
+    t.join(2)
+    assert not t.is_alive() and len(touches) >= 2 and sleeps == []
+
+
 def test_heartbeat_keeps_an_in_process_job_alive(client, no_worker, monkeypatch):
     _, email = register_headers(client, "demo-hb")
     job_id = _new_job(_user_id(email), status="running")

@@ -432,6 +432,10 @@ function updateDatasetUI() {
     $('dbRows').textContent = numFmt(currentDataset.rows);
     $('dbSize').textContent = currentDataset.size || '—';
     $('dbRels').textContent = countRelationships(datasetTables);
+  } else {
+    // A flushed or disconnected workspace must not keep the previous dataset's numbers, even hidden: a stale table count
+    // reads as "a dataset is connected" while the next connect is still in flight.
+    ['dbTables', 'dbRows', 'dbSize', 'dbRels'].forEach(id => { $(id).textContent = '—'; });
   }
 }
 

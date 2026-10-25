@@ -252,6 +252,7 @@ try {
   ok('flush: answer sheet and progress are hidden', await waitFor(page, () => document.getElementById('answerSheet').classList.contains('hidden-element') && document.getElementById('runProgress').hidden, null, 10000));
   const flushed = await page.evaluate(() => ({
     question: document.getElementById('question').value,
+    stats: ['dbTables', 'dbRows', 'dbSize', 'dbRels'].map((i) => document.getElementById(i).textContent),
     rows: document.querySelectorAll('#resultsTable tbody tr').length,
     sql: document.getElementById('sqlOut').textContent,
     kpis: ['kpiConfidence', 'kpiReliability', 'kpiRows', 'kpiExec', 'relScore'].map((i) => document.getElementById(i).textContent),
@@ -267,6 +268,9 @@ try {
     schemaList: document.getElementById('schemaList').children.length,
   }));
   ok('flush: question box emptied', flushed.question === '', flushed.question);
+  // the reconnect below waits for #dbTables > 0: a stale count from the flushed dataset would satisfy it before the new
+  // connect finished, and that connect then cleared the question typed next (the 'after flush' step failed in CI)
+  ok('flush: dataset stats cleared', flushed.stats.every((v) => v === '—'), JSON.stringify(flushed.stats));
   ok('flush: result table, SQL, KPIs and raw response reset', flushed.rows === 0 && /appears here/.test(flushed.sql) && flushed.kpis.every((k) => k === '—') && /appear here/.test(flushed.raw), JSON.stringify(flushed));
   ok('flush: stage statuses and open stage panel cleared', flushed.stageHidden && flushed.stagesIdle && flushed.stageLabels, JSON.stringify(flushed));
   ok('flush: trace, validation and retrieval panels reset, no stale error, no dataset listed', /Run a successful query/.test(flushed.trace) && /Appears after/.test(flushed.val) && /Appears after/.test(flushed.retr) && !flushed.err && flushed.schemaList === 0, JSON.stringify(flushed));

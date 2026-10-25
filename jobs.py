@@ -458,7 +458,7 @@ def execution_mode() -> str:
 _inflight: dict = {}
 _inflight_lock = threading.Lock()
 _heavy_slots = {"sem": None}
-_heartbeat = {"thread": None}
+_heartbeat = {"thread": None, "stop": threading.Event()}
 
 
 def _heavy_semaphore() -> threading.Semaphore:
@@ -516,17 +516,20 @@ def touch_inflight_jobs() -> int:
         db.close()
 
 
+def _heartbeat_loop(stop: threading.Event) -> None:
+    # Event.wait, not time.sleep: the retry back-off in _execute_job uses time.sleep, and a shared sleep would couple the two
+    # (a test that patches time.sleep made this thread spin and recorded its 15 s waits as retry back-offs in CI).
+    while not stop.wait(config.JOB_HEARTBEAT_SECONDS):
+        touch_inflight_jobs()
+
+
 def _ensure_heartbeat() -> None:
     with _inflight_lock:
         if _heartbeat["thread"] is not None:
             return
 
-        def _loop():
-            while True:
-                time.sleep(config.JOB_HEARTBEAT_SECONDS)
-                touch_inflight_jobs()
-
-        _heartbeat["thread"] = threading.Thread(target=_loop, name="qs-job-heartbeat", daemon=True)
+        _heartbeat["thread"] = threading.Thread(target=_heartbeat_loop, args=(_heartbeat["stop"],), name="qs-job-heartbeat",
+                                                daemon=True)
         _heartbeat["thread"].start()
 
 
