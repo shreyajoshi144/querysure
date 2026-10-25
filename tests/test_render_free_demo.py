@@ -56,6 +56,14 @@ def s3(tmp_path, monkeypatch):
         storage._reset_client_cache()
 
 
+@pytest.fixture(autouse=True)
+def _pause_maintenance_thread(monkeypatch):
+    """The app's maintenance thread (started with the TestClient, every 30 s) also fails orphaned jobs. These tests age jobs
+    on purpose, so it is paused here: otherwise it can fail a job between a test's setup and its check (seen in CI)."""
+    from observability import alerts
+    monkeypatch.setattr(alerts, "run_once_if_leader", lambda: None)
+
+
 class _Queue:
     """Stands in for rq.Queue: records what would have gone to the worker."""
     enqueued: list = []
