@@ -1107,6 +1107,7 @@ body.settings-open { overflow: hidden; }
 .tag-warn { background: var(--warn-bg); color: var(--warn); border-color: rgba(242, 198, 111, .26); }
 .inspector { background: #070d1a; }
 @media (min-width: 1101px) {
-  body.inspector-open .workspace-container { margin-right: 440px; transition: margin .22s ease; }
+  /* No transition: animating the margin reflowed the pipeline while the next stage was being clicked. */
+  body.inspector-open .workspace-container { margin-right: 440px; }
 }
 .hero-fineprint { color: #c3d0ea; text-shadow: 0 1px 14px rgba(2, 5, 12, .9); }

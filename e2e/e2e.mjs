@@ -97,9 +97,11 @@ await page.evaluateOnNewDocument(() => {
 
 // Act as the "payment provider's hosted page": intercept navigation to it and record the signed link.
 let providerUrl = null;
+let delayBillingMs = 0;   // > 0: hold GET /api/billing that long, as on a slow network
 await page.setRequestInterception(true);
 page.on('request', (req) => {
   const u = req.url();
+  if (delayBillingMs && new URL(u).pathname === '/api/billing') { setTimeout(() => req.continue(), delayBillingMs); return; }
   if (u.startsWith('https://pay.example.test/')) {
     if (req.isNavigationRequest()) providerUrl = u;
     return req.respond({ status: 200, contentType: 'text/html', body: '<h1>provider checkout</h1>' });
@@ -180,11 +182,24 @@ try {
   await viaMenu('dataMenuBtn', '#sampleBtn');
   ok('sample dataset connects', await waitFor(page, () => Number(document.getElementById('dbTables')?.textContent) > 0, null, 30000));
   await page.type('#question', 'total sales amount by region');
+  // Record every scrollIntoView the app makes during this run, and whether the report had already finished at the time.
+  await page.evaluate(() => {
+    window.__scrollCalls = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (opts) {
+      window.__scrollCalls.push({ id: this.id, afterReport: !!(typeof lastReport !== 'undefined' && lastReport) });
+      return original.call(this, opts);
+    };
+  });
   await clickAtTop('#analyzeBtn');
   ok('SQL generated and results rendered', await waitFor(page, () => document.querySelectorAll('#resultsTable tbody tr').length > 0, null, 60000));
   const sql = await page.$eval('#sqlOut', (e) => e.textContent);
   ok('generated SQL is shown', /select/i.test(sql), sql);
   ok('durable report id produced by the run', await waitFor(page, () => typeof lastReport !== 'undefined' && lastReport && !!lastReport.report_id, null, 60000));
+  // The answer is scrolled into view when its rows render. A scroll started when the (slower) report finished moved the
+  // Download buttons under the pointer: in CI the JSON click then landed off the button and no file was ever downloaded.
+  const scrollCalls = await page.evaluate(() => window.__scrollCalls || []);
+  ok('the answer is scrolled into view when it renders, not after the report finishes', scrollCalls.some((c) => c.id === 'sec-answer' && !c.afterReport) && !scrollCalls.some((c) => c.afterReport), JSON.stringify(scrollCalls));
   // ---- redundant "Download report" control is gone; CSV / JSON downloads work and match the on-screen result
   ok('Download report button removed', (await page.$('#downloadReportBtn')) === null);
   ok('CSV and JSON download buttons remain', !!(await page.$('#downloadCsvBtn')) && !!(await page.$('#downloadJsonBtn')));
@@ -215,16 +230,28 @@ try {
   ok('eight workflow nodes are real buttons with status in their accessible name', stageInfo.length === 8 && stageInfo.every((s) => s.tag === 'BUTTON' && /: (completed|skipped|failed|running|pending|warning|no details)$/.test(s.label)), JSON.stringify(stageInfo));
   ok('executed stages report completed', stageInfo.filter((s) => /completed|warning/.test(s.label)).length >= 8, JSON.stringify(stageInfo.map((s) => s.label)));
   ok('stage details are hidden until a stage is selected', await page.$eval('#stageDetail', (e) => e.hidden));
+  // Where every stage button is, read straight after a click and again 400 ms later: identical when nothing slides.
+  const stagePositions = () => page.evaluate(() => [...document.querySelectorAll('#pipeList .stage-btn')].map((b) => Math.round(b.getBoundingClientRect().left)).join(','));
   await page.click('#pipeList [data-step="validation"] .stage-btn');
+  const opened0 = await stagePositions();
   const det = await page.$eval('#stageDetail', (e) => ({ hidden: e.hidden, text: e.innerText }));
   ok('selecting Validate shows its status, duration and real response fields', !det.hidden && /Validate/.test(det.text) && /completed/i.test(det.text) && /\d+\s*ms/.test(det.text) && /Verdict/.test(det.text) && /Passed/.test(det.text), det.text.slice(0, 300));
   ok('selected stage is exposed via aria-pressed', (await page.$eval('#pipeList [data-step="validation"] .stage-btn', (b) => b.getAttribute('aria-pressed'))) === 'true');
+  await sleep(400);
+  const opened1 = await stagePositions();
+  // The strip used to slide (smooth scroll + an animated margin as the inspector opened) right after a click, so the next
+  // stage click landed on the neighbouring stage ("selecting Execute shows ... Generate SQL" in CI).
+  ok('selecting a stage does not slide the pipeline under the pointer', opened0 === opened1, `${opened0} -> ${opened1}`);
   await page.click('#pipeList [data-step="sql"] .stage-btn');
   const detSql = await page.$eval('#stageDetail', (e) => e.innerText);
   ok('selecting Generate SQL shows the generated SQL response', /Generate SQL/.test(detSql) && /select/i.test(detSql));
   await page.click('#pipeList [data-step="execution"] .stage-btn');
+  const exec0 = await stagePositions();
   const detExec = await page.$eval('#stageDetail', (e) => e.innerText);
   ok('selecting Execute shows the real row count and result preview', /Rows returned/i.test(detExec) && /First rows/i.test(detExec), detExec.slice(0, 300));
+  await sleep(400);
+  const exec1 = await stagePositions();
+  ok('switching stages with the inspector open does not slide the pipeline either', exec0 === exec1, `${exec0} -> ${exec1}`);
   await page.click('#pipeList [data-step="verify"] .stage-btn');
   const detVerify = await page.$eval('#stageDetail', (e) => e.innerText);
   ok('selecting Verify shows correctness checks and the independent verification', /Correctness checks/i.test(detVerify) && /Independent verification/i.test(detVerify), detVerify.slice(0, 300));
@@ -384,6 +411,8 @@ try {
   ok('token removed from browser storage', (await page.evaluate(() => localStorage.getItem('qs_token'))) === null);
 
   step = 'login2';
+  // Plan and billing data arrive late after this sign-in: settings must still open in its final layout (see 'export').
+  delayBillingMs = 2500;
   await openLogin();
   await page.type('#loginEmail', email);
   await page.type('#loginPassword', PASSWORD);
@@ -394,6 +423,12 @@ try {
   // ---------------------------------------------------------------- 7. data export
   step = 'export';
   await page.click('#settingsToggleBtn');
+  // Opened while billing was still loading, the panel later inserted "Upgrade to Pro" above "Download my data", moving it
+  // 37 px under the pointer: the click hit a section title and no export was downloaded.
+  const settingsShown = await waitFor(page, () => !document.getElementById('settingsModal').hidden, null, 10000);
+  const firstLayout = await page.evaluate(() => ({ msg: document.getElementById('settingsBillingMessage').textContent, upgrade: !document.getElementById('settingsUpgradeBtn').hidden }));
+  ok('settings opens with billing already loaded, so no row appears above its buttons afterwards', settingsShown && !/Loading billing/.test(firstLayout.msg) && firstLayout.upgrade, JSON.stringify(firstLayout));
+  delayBillingMs = 0;
   fs.rmSync(DL, { recursive: true, force: true }); fs.mkdirSync(DL, { recursive: true });
   await page.click('#settingsExportBtn');
   let exp = null;
