@@ -82,8 +82,17 @@ services:
         sync: false
       - key: TRUSTED_PROXY_IPS
         sync: false
+      # Free demo mode: one web process (512 MB RAM, 0.1 CPU), uploads capped at 10 MB, and upload / report jobs run in this
+      # process whenever no worker heartbeat is visible (JOB_EXECUTION=auto). Those in-process jobs are NOT durable: a
+      # restart loses them and they are reported as failed (JOB_INTERRUPTED) so the user can retry. See docs/OPERATIONS.md.
       - key: WEB_CONCURRENCY
-        value: "2"
+        value: "1"
+      - key: MAX_UPLOAD_MB
+        value: "10"
+      - key: MAX_UPLOAD_XLSX_MB
+        value: "2"            # Excel parsing is slow on 0.1 CPU: 2 MB took ~11 minutes in a 0.1-CPU test container
+      - key: JOB_EXECUTION
+        value: "auto"
       - key: THREADPOOL_MAX_WORKERS
         value: "20"
       - key: DB_POOL_SIZE

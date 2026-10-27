@@ -67,8 +67,8 @@ flowchart LR
 
 ## Data flow
 
-1. **Upload.** `POST /api/connect/upload` streams the file to disk with a per-type size limit (CSV/JSON 50 MB, Excel 50 MB, SQLite 100 MB), checks the user's quota, stages it (S3 in production) and returns `202` with a job ID.
-2. **Ingestion.** The worker converts CSV, JSON or Excel into one SQLite file (row, column, sheet and zip-bomb caps), profiles it, and stores it under the user's prefix. The bundled sample (`create_retail.py`) is a deterministic 5-table retail database.
+1. **Upload.** `POST /api/connect/upload` streams the file to disk with a size limit (`MAX_UPLOAD_MB`, default 10 MB, under per-type ceilings of CSV/JSON 50 MB, Excel 50 MB, SQLite 100 MB), checks the user's quota, stages it (S3 in production) and returns `202` with a job ID.
+2. **Ingestion.** The worker (or, with no worker alive and `JOB_EXECUTION=auto`, the web process right after the response; not durable, see [OPERATIONS.md](OPERATIONS.md#render-free-demo-mode)) converts CSV, JSON or Excel into one SQLite file (row, column, sheet and zip-bomb caps), profiles it, and stores it under the user's prefix. The bundled sample (`create_retail.py`) is a deterministic 5-table retail database.
 3. **Question.** The pipeline above reads the dataset through a local read-only copy (`storage.ensure_local`). The LLM receives schema context and the question; it never receives full data rows.
 4. **Result.** Rows, SQL, validation and trace are stored on the user's `pipeline_sessions` row and in `query_history`; the browser renders them with escaped output.
 

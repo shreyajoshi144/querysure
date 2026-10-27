@@ -432,6 +432,10 @@ function updateDatasetUI() {
     $('dbRows').textContent = numFmt(currentDataset.rows);
     $('dbSize').textContent = currentDataset.size || '—';
     $('dbRels').textContent = countRelationships(datasetTables);
+  } else {
+    // A flushed or disconnected workspace must not keep the previous dataset's numbers, even hidden: a stale table count
+    // reads as "a dataset is connected" while the next connect is still in flight.
+    ['dbTables', 'dbRows', 'dbSize', 'dbRels'].forEach(id => { $(id).textContent = '—'; });
   }
 }
 
@@ -1276,11 +1280,22 @@ async function deleteAccount() {
   btn.disabled = false;
   finishDelete(res, 'Password is incorrect.');
 }
-function openSettings() {
+// Plan, usage and billing decide which rows the panel shows ("Upgrade to Pro" sits above "Download my data"). Right after
+// sign-in they may not be loaded yet; revealing the panel first and filling it in afterwards pushed the account buttons
+// down while the user was clicking them. So when they are unknown, load them before the panel appears (bounded, so a slow
+// API never keeps it closed); when they are already known (the usual case) it opens at once and refreshes in place.
+const SETTINGS_DATA_WAIT_MS = 4000;
+let settingsOpening = false;
+async function openSettings() {
+  if (settingsOpening) return;
   setupSettingsGoogle();
   refreshSettingsView();
-  refreshAccountUsage();
-  refreshBillingState();
+  const loads = Promise.allSettled([refreshAccountUsage(), refreshBillingState()]);
+  if ($('settingsModal').hidden && (!accountUsage || !billingState)) {
+    settingsOpening = true;
+    try { await Promise.race([loads, sleep(SETTINGS_DATA_WAIT_MS)]); } finally { settingsOpening = false; }
+    refreshSettingsView();
+  }
   $('settingsModal').hidden = false;
   document.body.classList.add('settings-open');
 }
@@ -1586,17 +1601,29 @@ function drawEdges() {
   labels.innerHTML = chips;
 }
 
-function keepActiveInView() {
+// userSelected: the user just picked a stage (click / keyboard). Then the strip moves only if that node is not fully visible,
+// and instantly: a smooth slide moved the next node under the pointer, so a second click landed on the neighbouring stage.
+function keepActiveInView(userSelected = false) {
   const scroller = $('wfScroll'); if (!scroller || scroller.scrollWidth <= scroller.clientWidth + 2) return;
   const sel = selectedStage && document.querySelector(`.pipeline-step-node[data-step="${selectedStage}"]`);
-  const li = document.querySelector('.pipeline-step-node.active') || sel;
+  const li = (userSelected ? sel : null) || document.querySelector('.pipeline-step-node.active') || sel;
   if (!li) return;
-  // With the inspector docked on the right, centre the node in the part of the canvas that stays visible.
-  const docked = sel && li === sel && window.innerWidth > 860;
-  const anchor = docked ? Math.min(scroller.clientWidth * 0.5, Math.max(160, scroller.getBoundingClientRect().right - 460 - scroller.getBoundingClientRect().left) / 2) : scroller.clientWidth / 2;
+  // With the inspector open, centre the node in the part of the canvas it does not cover. Measured, not assumed: on wide
+  // screens the workspace makes room for the inspector (margin), on narrower ones the inspector overlaps the canvas.
+  const sr = scroller.getBoundingClientRect();
+  const insp = $('stageDetail');
+  // offsetLeft/offsetTop (the inspector is position: fixed): its layout box, without the slide-in transform.
+  const open = sel && li === sel && insp && !insp.hidden && insp.offsetWidth > 0;
+  const visibleRight = (open && insp.offsetLeft < sr.right && insp.offsetTop < sr.bottom) ? Math.max(sr.left + 160, insp.offsetLeft) : sr.right;
+  const visibleWidth = Math.min(scroller.clientWidth, visibleRight - sr.left);
+  const anchor = visibleWidth / 2;
+  if (userSelected) {
+    const nodeLeft = li.offsetLeft - scroller.scrollLeft;
+    if (nodeLeft >= 0 && nodeLeft + li.offsetWidth <= visibleWidth) return;
+  }
   const left = li.offsetLeft + li.offsetWidth / 2 - anchor;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  scroller.scrollTo({left: Math.max(0, left), behavior: reduce ? 'auto' : 'smooth'});
+  scroller.scrollTo({left: Math.max(0, left), behavior: (reduce || userSelected) ? 'auto' : 'smooth'});
 }
 
 // ---- Inspector (side panel) ---------------------------------------------------------------------------------------------------
@@ -1791,16 +1818,16 @@ function renderStageDetail() {
 function selectStage(step, opts = {}) {
   const closing = selectedStage === step && !opts.keepOpen;
   selectedStage = closing ? null : step;
-  refreshStages();
+  refreshStages({userSelected: true});
   if (selectedStage && opts.focusPanel) { const t = $('inspTitle'); if (t) t.focus(); }
 }
 function closeInspector(restoreFocus) {
   if (!selectedStage) return;
-  const key = selectedStage; selectedStage = null; refreshStages();
+  const key = selectedStage; selectedStage = null; refreshStages({userSelected: true});
   if (restoreFocus) { const b = document.querySelector(`.pipeline-step-node[data-step="${key}"] .stage-btn`); if (b) b.focus(); }
 }
 
-function refreshStages() {
+function refreshStages(opts = {}) {
   const states = {};
   NODE_DEFS.forEach(n => { states[n.key] = nodeState(n.key); });
   nodeStates = states;
@@ -1817,7 +1844,7 @@ function refreshStages() {
   });
   drawEdges();
   renderStageDetail();
-  keepActiveInView();
+  keepActiveInView(!!opts.userSelected);
 }
 
 function wireStages() {
@@ -2373,15 +2400,22 @@ async function ensureSession() {
   return true;
 }
 
+// The server always ends a job: succeeded, failed, or JOB_INTERRUPTED / JOB_STALE once nothing can finish it (at most about
+// 27 minutes). So keep polling past that instead of giving up after 3 minutes while a slow job (an Excel file on a 0.1-CPU
+// free instance takes minutes) is still working and would succeed.
+const JOB_POLL_LIMIT_MS = 30 * 60 * 1000;
+
 async function pollJob(jobId, label) {
-  for (let i = 0; i < 180; i++) {
+  const started = Date.now();
+  while (Date.now() - started < JOB_POLL_LIMIT_MS) {
     const res = await apiGet('/api/jobs/' + encodeURIComponent(jobId));
     if (!res.success) throwApiError(res, label + ' failed.');
     if (res.status === 'succeeded') return res.result || {};
     // The worker's reason ("Excel workbook is not a valid ZIP container.") tells the user what to fix; shown as text.
     if (res.status === 'failed') throw new Error(res.error ? `${label} failed: ${res.error}` : label + ' failed. Please try again.');
-    setPipelineState(label + ' · ' + (res.status || 'queued'));
-    await sleep(1000);
+    const secs = Math.round((Date.now() - started) / 1000);
+    setPipelineState(label + ' · ' + (res.status || 'queued') + ' · ' + secs + 's');
+    await sleep(secs < 60 ? 1000 : 3000);   // poll less often once it is clearly a long job (less load on a small instance)
   }
   throw new Error(label + ' timed out.');
 }
@@ -2570,7 +2604,11 @@ async function runAll() {
     $('kpiRows').textContent = numFmt(rowCount);
     $('kpiExec').textContent = execMs + ' ms';
     renderCorrectness(execution);
-    stageDone('execution', execution); await sleep(150);
+    stageDone('execution', execution);
+    // Bring the answer into view as soon as its rows are on screen, not after the report job: that finishes seconds later,
+    // when the user may already be clicking Download CSV / JSON, and a smooth scroll then moves the buttons under the pointer.
+    $('sec-answer').scrollIntoView({behavior: 'smooth', block: 'start'});
+    await sleep(150);
 
     markStep('reliability','active'); setPipelineState('Checking data reliability…');
     const reliability = await post('/api/analyze-reliability', {session_id: sessionId});
@@ -2609,7 +2647,6 @@ async function runAll() {
       stageEnd('report', undefined, 'error', String((reportErr && reportErr.message) || reportErr).slice(0, 300));
       setPipelineState('Done · report unavailable');
     }
-    $('sec-answer').scrollIntoView({behavior: 'smooth', block: 'start'});
 
   } catch (e) {
     Object.keys(stageInfo).filter(k => stageInfo[k].status === 'running').forEach(k => stageEnd(k, undefined, 'error', String(e.message || e).slice(0, 300)));

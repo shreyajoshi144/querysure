@@ -40,6 +40,7 @@ uvicorn's access log is filtered to drop client address and query string (verifi
 * Spend: per-user and global daily caps reserve budget **before** the provider call (Redis, DB fallback). If neither can reserve the request **fails closed** (Sprint 3 behaviour, kept). Provider failure refunds the reservation down to tokens actually spent; a failing settle can no longer turn a paid-for answer into a 500 (the counter stays high = fail-safe).
 * Query slots: `/api/execute-sql` reserves a daily slot and refunds it in a `finally` unless the caller received a result (executor crash, failed query, session write conflict). A failing refund is logged, counted, evented, and never masks the original error.
 * Background jobs: jobs stuck `queued/running/retrying` longer than `JOB_STALE_SECONDS` (1500, > the 15 min RQ timeout) are failed with `JOB_STALE` and release their upload quota; a reaped job is never resurrected if a worker later picks it up. Runs on the elected maintenance leader.
+* Jobs nothing can finish: while **no worker is alive**, a queued/running job whose heartbeat is older than `JOB_ORPHAN_SECONDS` (90) is failed with `JOB_INTERRUPTED` ("the server restarted or no background worker is running, please try again") and releases its quota. This catches in-process jobs lost in a restart and jobs queued for a worker that is not running. It runs when the user's browser polls `GET /api/jobs/{id}` and on the maintenance leader; such a job is never resurrected either.
 
 ## 5. SLOs and alerts
 Defaults (env-configurable, see `config.py` Sprint 4 block): availability 99.5 %, interactive API p95 1.5 s / p99 5 s (AI/upload/report routes excluded), AI success 95 %, AI p95 30 s, queue wait p95 30 s, job success 98 % (a user's invalid file is `rejected`, not a failure). Objectives with fewer than `SLO_MIN_SAMPLES` observations report `no_data`.
@@ -51,7 +52,7 @@ Alerts (evaluated by one elected process every `ALERT_EVAL_INTERVAL_SECONDS`; en
 |---|---|---|
 | `database_unavailable` | `/api/ready`, provider status page | Fail over / restore (section 10). Web stays 503 until DB answers. |
 | `redis_unavailable` | `/api/ready` | App degrades to per-process limits and DB budget ledger; jobs cannot enqueue (503). Restore Redis. |
-| `worker_down` / `queue_backlog` | `/ops` Queue panel | Restart/scale `python worker.py`; stale jobs auto-fail after 25 min and release quota. |
+| `worker_down` / `queue_backlog` | `/ops` Queue panel | Restart/scale `python worker.py`; with `JOB_EXECUTION=auto` new uploads/reports run in the web process meanwhile; stale jobs auto-fail (`JOB_INTERRUPTED` after 90 s with no worker, `JOB_STALE` after 25 min) and release quota. |
 | `ai_circuit_open:<p>` | `/ops` AI providers | Provider outage; fallback chain is serving. Nothing to do unless `ai_all_providers_down`. |
 | `ai_budget_exhausted` | `/ops` AI panel | Raise `GLOBAL_DAILY_AI_BUDGET_USD` after review, or wait for 00:00 UTC. |
 | `db_pool_saturated` | `/ops` Database | Slow queries or too few connections: raise `DB_POOL_SIZE`/`DB_MAX_OVERFLOW` within Postgres `max_connections` (see section 6). |
@@ -109,8 +110,8 @@ required setting is missing (that file lists every guard).
 
 Defines `querysure-api` (web, free), `querysure-worker` (background worker, **paid `starter`**: Render has no free worker plan),
 `querysure-maintenance` (cron, `starter`), `querysure-db` (Postgres) and `querysure-redis` (Key Value, `noeviction`, private
-network only). The worker is required: it sends every verification / password-reset e-mail and ingests uploads. It is also where
-SMTP runs, so the web service never needs outbound mail ports.
+network only). The worker and the cron are **optional**: without them the app runs in [free demo mode](#render-free-demo-mode).
+With a worker, e-mails, uploads and reports go through the durable Redis queue; the cron only matters once billing is enabled.
 
 #### Exact steps
 
@@ -149,12 +150,78 @@ and evade limits. Never use `*`. Render's load balancer reaches your service ove
 try one login from a different network. If the second network is also rate-limited, the CIDR does not cover Render's proxy:
 widen it to the range your service logs show for peer addresses.
 
-#### Free-plan caveats
+#### Render free demo mode
+
+For a demo on free services only: the free web service, free Postgres, free Key Value and an S3-compatible bucket (for example
+Cloudflare R2's free tier). Do not create `querysure-worker` or `querysure-maintenance` (both are paid); if the Blueprint already
+created them, suspend or delete them in the dashboard. `render.yaml` sets the web service for this:
+
+| Setting | Value | Why |
+|---|---|---|
+| `WEB_CONCURRENCY` | `1` | One uvicorn process. The free instance has 512 MB RAM and 0.1 CPU; each idle process holds about 135 MB, so a second one only takes memory away from uploads. |
+| `MAX_UPLOAD_MB` | `10` | Largest upload, any format. |
+| `MAX_UPLOAD_XLSX_MB` | `2` | Excel only: parsing a workbook is CPU-heavy (see the timings below). |
+| `JOB_EXECUTION` | `auto` | No worker heartbeat -> uploads and reports run in the web process right after the `202` response. |
+| `AUTH_EMAIL_DELIVERY` | (unset = `auto`) | Same for verification / reset e-mails (HTTPS e-mail API, step 3). |
+
+How in-process jobs behave, honestly:
+
+* **Not durable.** They exist only in the web process's memory. A deploy, a restart, a crash or an out-of-memory kill loses a
+  running job. The job row then stops getting its heartbeat (every `JOB_HEARTBEAT_SECONDS`, 15 s), and within
+  `JOB_ORPHAN_SECONDS` (90 s) the next status poll reports it as failed with `JOB_INTERRUPTED` and a "please try again" message,
+  and releases the upload quota it reserved. Nothing is retried automatically after a restart. Uploaded data that had already
+  finished is unaffected: datasets live in S3 and Postgres.
+* **One at a time.** Each web process runs one heavy job (upload or report) at a time (`IN_PROCESS_JOB_CONCURRENCY=1`); others
+  wait as `queued`. E-mails are not held behind them.
+* **Same checks as the worker.** The job runs the same code (`jobs._execute_job`): ownership, quotas (reserved in the request,
+  released on completion or failure), retries for transient errors, safe error messages, and staged-input cleanup.
+* **Sleep.** Render spins the free service down after 15 minutes without requests; the browser polls the job (every second,
+  every 3 s after the first minute) while it runs, so a running job keeps the service awake. The browser waits up to 30
+  minutes, longer than the server lets any job live, so it always gets a real outcome instead of "timed out".
+* **Shared CPU.** While a job runs it uses most of the single 0.1 CPU, so other requests (sign-in, questions) are slower
+  until it finishes.
+* **A late result never wins.** If a job was already reported as failed (`JOB_INTERRUPTED` / `JOB_STALE`) but its thread
+  finishes afterwards, the result is discarded: the dataset is not switched, stored objects are deleted, no report rows are
+  added and the failure stays as reported.
+
+Measured memory of the whole upload job (ingest, profile, semantic layer, search index) for 10 MB files, one process with the
+app loaded (macOS, Python 3.12; idle baseline about 130-135 MB):
+
+| 10 MB file | Peak RSS | Time (8-core Mac) |
+|---|---|---|
+| CSV (226k rows) | 300 MB | 4.6 s |
+| JSON (72k records) | 261 MB | 1.2 s |
+| XLSX (225k rows) | 352 MB | 58 s |
+| SQLite (207k rows) | 135 MB | 0.7 s |
+
+Measured end to end on the real image under Render-free limits: Docker `--memory=512m --memory-swap=512m --cpus=0.1`
+(cgroup `memory.max` 536870912, `cpu.max` 10000/100000), `WEB_CONCURRENCY=1` (one uvicorn process, verified), no worker, Redis,
+S3 API (moto), development database. Time is from starting the upload to the job's final status, as the browser sees it:
+
+| File | Result | Peak container memory | Time at 0.1 CPU |
+|---|---|---|---|
+| idle, after start | - | 109-127 MB | - |
+| SQLite 10 MB (207k rows) | succeeded | 188 MB | 66 s |
+| JSON 10 MB (72k records) | succeeded | 302 MB | 85 s |
+| CSV 10 MB (226k rows) | succeeded | 356 MB | 305 s |
+| XLSX 1 MB (22k rows) | succeeded | 177 MB | 345 s |
+| XLSX 2 MB (45k rows) | succeeded | 199 MB | 639 s |
+| XLSX 10 MB (225k rows) | still parsing after 25 min, failed as `JOB_INTERRUPTED` | 217 MB | > 1500 s |
+
+Restart test: the container was restarted 8 s after a 1 MB workbook upload was accepted; the browser's next polls
+reported `failed` / `JOB_INTERRUPTED` with the retry message 148 s after the upload began (`JOB_ORPHAN_SECONDS=30` in that
+test; the default 90 s adds about a minute). No run was killed for memory. Registration took 6-11 s on 0.1 CPU (bcrypt cost 12, unchanged). Render's real CPU share
+may differ from a hard Docker quota; these numbers were not measured on Render itself. Excel ingestion parses the
+workbook several times (`modules/ingestion.py` `read_excel`), which is why it is so slow; the 2 MB Excel limit keeps it within
+about 11 minutes.
+
+Free-plan caveats:
 
 * Free Postgres is deleted after 30 days; use a paid database plan before real users arrive (change `plan:` under `databases:`).
 * Free Key Value is not persistent: a restart empties queued jobs (they are reaped as `JOB_STALE` and the user retries) and resets
   rate-limit counters. Use a paid Key Value plan if that is unacceptable.
-* The free web service sleeps when idle; the first request after sleep is slow.
+* The free web service sleeps when idle; the first request after sleep takes up to about a minute.
+* 0.1 CPU makes everything CPU-bound slower than on a laptop, most visibly Excel parsing.
 
 ### Docker
 
@@ -163,8 +230,10 @@ widen it to the range your service logs show for peer addresses.
 starting; `HEALTHCHECK` probes `/api/health`.
 
 `docker-compose.yml` is a **development** stack (Postgres, Redis, API, worker; `ENVIRONMENT: development`, wildcard CORS). It is not a
-production recipe. The `worker` service is required for e-mail and report jobs (dev e-mail is written inside it:
-`docker compose exec worker sh -c 'cat .dev_mail/*.eml'`). The worker serves no HTTP, so Compose overrides the image
+production recipe. While the `worker` service is up it handles e-mail, upload and report jobs (dev e-mail is then written inside
+it: `docker compose exec worker sh -c 'cat .dev_mail/*.eml'`); with it stopped they run in the API container
+(`JOB_EXECUTION=auto`). The API container reads `WEB_CONCURRENCY` (default 2; set `WEB_CONCURRENCY=1` in `.env` to mirror Render
+free) and `MAX_UPLOAD_MB` (default 10) from `.env`. The worker serves no HTTP, so Compose overrides the image
 `HEALTHCHECK` for it: the worker is healthy while its Redis heartbeat key `qs:g:worker:<hostname>:<pid>` (30 s TTL, written by
 `observability/gauges.py`) exists. In development the API creates the schema with `create_all()` under a
 Postgres advisory lock, so several uvicorn workers can start at once; production always uses Alembic.

@@ -3,14 +3,20 @@
 RQ is used because it is deliberately small, Redis-native, easy to operate with
 an existing Redis deployment, and provides a dedicated worker process without
 introducing another broker or service architecture.
+
+Deployments without a worker (Render's free plan) run the same jobs in the web process right after the response
+(JOB_EXECUTION=in_process, or auto with no worker heartbeat). Those jobs are not durable: they live only as long as the
+process, so they keep a heartbeat on their row, and a job whose heartbeat stops with no worker alive is failed as
+JOB_INTERRUPTED instead of staying queued.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import redis
 from rq import Queue
@@ -18,6 +24,7 @@ from rq import Queue
 import logging
 
 import storage
+import config
 from config import REDIS_URL, IS_PRODUCTION, JOB_STALE_SECONDS
 from observability import context as obs_context, errors as obs_errors, events as obs_events, gauges as obs_gauges
 from observability import metrics as obs_metrics
@@ -30,6 +37,24 @@ QUEUE_NAME = "querysure"
 MAX_ATTEMPTS = 3
 logger = logging.getLogger("querysure.jobs")
 STALE_ERROR_CODE = "JOB_STALE"
+INTERRUPTED_ERROR_CODE = "JOB_INTERRUPTED"
+INTERRUPTED_MESSAGE = ("The operation stopped before it finished (the server restarted or no background worker is running). "
+                       "Please try again.")
+ACTIVE_STATUSES = ("queued", "running", "retrying")
+# Failed by the reaper / orphan check while possibly still running somewhere: such a job's late result is discarded.
+DEAD_ERROR_CODES = (STALE_ERROR_CODE, INTERRUPTED_ERROR_CODE)
+
+
+class JobAbandoned(Exception):
+    """The job was reported as failed (JOB_STALE / JOB_INTERRUPTED) while it was still running: the user was told to retry,
+    so its late result must not switch their dataset, add reports or overwrite the failure."""
+
+
+def _abandoned(db, job) -> bool:
+    db.refresh(job)
+    return job.status == "failed" and job.error_code in DEAD_ERROR_CODES
+# Jobs that load a whole dataset or render a report: one at a time per process when run in-process (memory).
+HEAVY_KINDS = {"dataset_ingestion", "report_generation"}
 
 
 def _now():
@@ -95,7 +120,12 @@ def _run_upload(db, job, payload):
             build_vector_store(semantic, cache_key=row.id)
             dataset_bytes = os.path.getsize(path)
             db_ref = storage.store_dataset(path, user_id)
+            if _abandoned(db, job):
+                storage.delete_dataset(db_ref)
+                raise JobAbandoned()
             _update_job(db, job, result_ref=json.dumps({"db_ref": db_ref}, separators=(",", ":")))
+        if _abandoned(db, job):
+            raise JobAbandoned()
         row = get_or_create_session(db, user_id, session_id)
         old_ref = row.db_path
         clear_cache_key(row.id)
@@ -162,6 +192,8 @@ def _run_report(db, job, payload):
                 uploaded_keys.append(key)
                 created.append(Report(user_id=job.user_id, session_id=row.id, key=key, kind=kind, size=size))
         # temp dir (and every local artifact in it) is gone here
+        if _abandoned(db, job):
+            raise JobAbandoned()
         for r in created:
             db.add(r)
         db.commit()
@@ -225,7 +257,7 @@ def _execute_job(job_id: str, payload: dict):
         obs_context.new_context(None)
         obs_context.bind_job(job.id)
         obs_context.bind_user(job.user_id)
-        if job.status == "failed" and job.error_code == STALE_ERROR_CODE:
+        if job.status == "failed" and job.error_code in DEAD_ERROR_CODES:
             # The reaper already failed this job and released its quota; running it now would resurrect a job the user was
             # told had failed. Drop the staged input and stop.
             if job.kind == "dataset_ingestion":
@@ -241,12 +273,21 @@ def _execute_job(job_id: str, payload: dict):
                 result = _dispatch(db, job, payload)
                 if job.kind == "dataset_ingestion":
                     storage.delete_staged(payload.get("object_ref"), job.user_id)
+                if _abandoned(db, job):
+                    raise JobAbandoned()
                 _update_job(db, job, status="succeeded", error_code=None, result_ref=json.dumps(result, separators=(",", ":")))
                 outcome = "succeeded"
                 obs_metrics.record_job(kind, "succeeded", queue_wait_ms, (time.monotonic() - started) * 1000)
                 logger.info("job succeeded", extra={"event": "job_succeeded", "kind": kind, "attempts": attempt + 1,
                                                     "queue_wait_ms": round(queue_wait_ms), "duration_ms": round((time.monotonic() - started) * 1000)})
                 return result
+            except JobAbandoned:
+                db.rollback()
+                if job.kind == "dataset_ingestion":
+                    storage.delete_staged(payload.get("object_ref"), job.user_id)
+                outcome = "abandoned"
+                logger.warning("late result of a failed job discarded", extra={"event": "job_abandoned", "kind": kind})
+                return None
             except Exception as exc:
                 last_error = exc
                 db.rollback()
@@ -263,10 +304,15 @@ def _execute_job(job_id: str, payload: dict):
                 if job.kind == "auth_email" and getattr(exc, "transient", True) is False:
                     break
                 if attempt + 1 < MAX_ATTEMPTS:
+                    if _abandoned(db, job):
+                        break
                     _update_job(db, job, status="retrying", error_code="JOB_RETRYING")
                     time.sleep(2 ** attempt)
         if job.kind == "dataset_ingestion":
             storage.delete_staged(payload.get("object_ref"), job.user_id)
+        if _abandoned(db, job):
+            outcome = "abandoned"
+            return None
         # Only ingestion ValueErrors are user-actionable validation messages. Any other ValueError subclass (e.g.
         # ssl.SSLCertVerificationError from an SMTP job, which is both OSError and ValueError) can carry hostnames and
         # certificate/driver detail and is persisted in jobs.result_ref, so it gets the generic text.
@@ -295,7 +341,6 @@ def reap_stale_jobs(now=None) -> int:
     """Fail background jobs stuck in queued/running/retrying for longer than JOB_STALE_SECONDS (worker killed mid-job, Redis
     flushed, enqueue lost). Failing them releases the quota reservation that in-flight uploads hold (quotas.py counts only
     queued/running), so a lost job can never lock a user out of uploading. Returns how many were reaped."""
-    from datetime import timedelta
     cutoff = (now or _now()) - timedelta(seconds=JOB_STALE_SECONDS)
     db = SessionLocal()
     try:
@@ -309,7 +354,7 @@ def reap_stale_jobs(now=None) -> int:
         if rows:
             db.commit()
             obs_events.record_event("stale_jobs_reaped", severity="warning", component="worker", detail={"reaped": len(rows)})
-        return len(rows)
+        return len(rows) + fail_orphaned_jobs(db, now=now)
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.warning("stale job reaper failed", extra={"event": "reaper_failed"})
@@ -318,7 +363,7 @@ def reap_stale_jobs(now=None) -> int:
         db.close()
 
 
-def enqueue_job(db, user_id: str, kind: str, payload: dict) -> Job:
+def enqueue_job(db, user_id: str, kind: str, payload: dict, background_tasks=None) -> Job:
     # In-flight uploads count against the owner's storage quota from creation (see quotas.py): record the
     # target session and staged size on the job row itself, inside the same transaction as the quota check.
     is_upload = kind == "dataset_ingestion"
@@ -343,6 +388,9 @@ def enqueue_job(db, user_id: str, kind: str, payload: dict) -> Job:
                 raise RuntimeError("Production queued uploads require S3-backed durable staging")
             _execute_job(job.id, payload)
             db.refresh(job)
+            return job
+        if execution_mode() == "in_process":
+            _start_in_process(job, payload, background_tasks)
             return job
         q = Queue(QUEUE_NAME, connection=client)
         q.enqueue(_execute_job, job.id, payload, job_timeout="15m")
@@ -391,5 +439,122 @@ def dispatch_auth_email(db, user_id: str, payload: dict, background_tasks=None) 
     job = Job(id=str(uuid.uuid4()), user_id=user_id, kind="auth_email", status="queued", created_at=_now(), updated_at=_now())
     db.add(job)
     db.commit()
-    background_tasks.add_task(_execute_job, job.id, payload)
+    _start_in_process(job, payload, background_tasks)
     return "background"
+
+
+def execution_mode() -> str:
+    """Where the next upload / report job runs: "queue" or "in_process" (JOB_EXECUTION, with auto resolved)."""
+    mode = config.JOB_EXECUTION
+    if mode == "auto":
+        return "queue" if worker_alive() else "in_process"
+    return mode
+
+
+# Jobs this process has accepted to run in-process and not yet finished (job id -> monotonic time accepted). Their rows get a
+# heartbeat (updated_at) so other processes can tell a live in-process job from one lost in a restart. An entry older than
+# JOB_STALE_SECONDS (longer than any job may run) gets no more heartbeats -- e.g. a background task Starlette never started
+# because the client disconnected -- so the orphan check fails it instead of it staying "queued" forever.
+_inflight: dict = {}
+_inflight_lock = threading.Lock()
+_heavy_slots = {"sem": None}
+_heartbeat = {"thread": None, "stop": threading.Event()}
+
+
+def _heavy_semaphore() -> threading.Semaphore:
+    with _inflight_lock:
+        if _heavy_slots["sem"] is None:
+            _heavy_slots["sem"] = threading.BoundedSemaphore(config.IN_PROCESS_JOB_CONCURRENCY)
+        return _heavy_slots["sem"]
+
+
+def _run_in_process(job_id: str, payload: dict, kind: str):
+    try:
+        if kind in HEAVY_KINDS:
+            with _heavy_semaphore():
+                return _execute_job(job_id, payload)
+        return _execute_job(job_id, payload)
+    finally:
+        with _inflight_lock:
+            _inflight.pop(job_id, None)
+
+
+def _start_in_process(job, payload: dict, background_tasks) -> None:
+    """Run `job` in this process: after the HTTP response when FastAPI BackgroundTasks are given, otherwise now."""
+    with _inflight_lock:
+        _inflight[job.id] = time.monotonic()
+    _ensure_heartbeat()
+    logger.info("job runs in-process", extra={"event": "job_in_process", "kind": job.kind})
+    if background_tasks is None:
+        _run_in_process(job.id, payload, job.kind)
+    else:
+        background_tasks.add_task(_run_in_process, job.id, payload, job.kind)
+
+
+def _live_inflight_ids() -> list:
+    oldest = time.monotonic() - JOB_STALE_SECONDS
+    with _inflight_lock:
+        return [job_id for job_id, accepted in _inflight.items() if accepted >= oldest]
+
+
+def touch_inflight_jobs() -> int:
+    """Refresh the heartbeat of this process's unfinished in-process jobs. Returns how many rows were touched."""
+    ids = _live_inflight_ids()
+    if not ids:
+        return 0
+    db = SessionLocal()
+    try:
+        n = (db.query(Job).filter(Job.id.in_(ids), Job.status.in_(ACTIVE_STATUSES))
+             .update({Job.updated_at: _now()}, synchronize_session=False))
+        db.commit()
+        return n
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.warning("job heartbeat failed", extra={"event": "job_heartbeat_failed"})
+        return 0
+    finally:
+        db.close()
+
+
+def _heartbeat_loop(stop: threading.Event) -> None:
+    # Event.wait, not time.sleep: the retry back-off in _execute_job uses time.sleep, and a shared sleep would couple the two
+    # (a test that patches time.sleep made this thread spin and recorded its 15 s waits as retry back-offs in CI).
+    while not stop.wait(config.JOB_HEARTBEAT_SECONDS):
+        touch_inflight_jobs()
+
+
+def _ensure_heartbeat() -> None:
+    with _inflight_lock:
+        if _heartbeat["thread"] is not None:
+            return
+
+        _heartbeat["thread"] = threading.Thread(target=_heartbeat_loop, args=(_heartbeat["stop"],), name="qs-job-heartbeat",
+                                                daemon=True)
+        _heartbeat["thread"].start()
+
+
+def fail_orphaned_jobs(db, job_id: str | None = None, now=None) -> int:
+    """Fail queued/running jobs that nothing can finish: no worker is alive and the row's heartbeat is older than
+    JOB_ORPHAN_SECONDS (an in-process job lost in a restart, or a job queued for a worker that is not running).
+    Releases upload quota reservations like the stale reaper. One conditional UPDATE, so a job that heartbeats or finishes
+    concurrently is never overwritten. Returns how many jobs were failed."""
+    if worker_alive():
+        return 0
+    cutoff = (now or _now()) - timedelta(seconds=config.JOB_ORPHAN_SECONDS)
+    mine = _live_inflight_ids()
+    q = db.query(Job).filter(Job.status.in_(ACTIVE_STATUSES), Job.updated_at < cutoff)
+    if job_id is not None:
+        q = q.filter(Job.id == job_id)
+    if mine:
+        q = q.filter(~Job.id.in_(mine))
+    kinds = [k for (k,) in q.with_entities(Job.kind).all()]
+    if not kinds:
+        return 0
+    n = q.update({Job.status: "failed", Job.error_code: INTERRUPTED_ERROR_CODE,
+                  Job.result_ref: json.dumps({"error": INTERRUPTED_MESSAGE}, separators=(",", ":")),
+                  Job.updated_at: _now()}, synchronize_session=False)
+    db.commit()
+    for kind in kinds[:n]:
+        obs_metrics.record_job(kind, "failed")
+    logger.warning("orphaned jobs failed", extra={"event": "jobs_interrupted", "count": n})
+    return n

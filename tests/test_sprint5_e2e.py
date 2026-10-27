@@ -21,6 +21,13 @@ def _have_browser_stack():
     return all(os.path.isdir(os.path.join(ROOT, "node_modules", p)) for p in ("puppeteer-core", "@sparticuz/chromium"))
 
 
+def _failure_message(stdout: str, stderr: str) -> str:
+    """The failed checks first (e2e.mjs prints them to stderr), then the tail of the log. It used to be the tail of stdout
+    first, so the headline began wherever the 4000-character cut fell -- e.g. "verification token stripped from URL after
+    use", a check that had passed -- and the real failure was buried at the end."""
+    return "FAILED CHECKS:\n" + stderr[-2000:] + "\n--- end of e2e output ---\n" + stdout[-4000:]
+
+
 pytestmark = pytest.mark.skipif(not _have_browser_stack(), reason="needs node + `npm install` (puppeteer-core, @sparticuz/chromium)")
 
 
@@ -76,7 +83,7 @@ def test_critical_user_flows_in_real_browser(tmp_path, minified):
         assert _wait_http(base + "/api/health"), (tmp_path / "server.log").read_text()[-2000:]
         run = subprocess.run(["node", "e2e/e2e.mjs"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=420)
         print(run.stdout[-6000:], run.stderr[-2000:])
-        assert run.returncode == 0, run.stdout[-4000:] + run.stderr[-2000:]
+        assert run.returncode == 0, _failure_message(run.stdout, run.stderr)
         # server log hygiene: no password, bearer token or one-time token ever reached the application/access log
         log = (tmp_path / "server.log").read_text(errors="replace")
         assert "E2eTestPassw0rd!" not in log and "WrongPassword123!" not in log and "Typed-Secret" not in log
