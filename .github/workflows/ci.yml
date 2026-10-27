@@ -125,11 +125,29 @@ jobs:
             -e ENVIRONMENT=development \
             -e DATABASE_URL=sqlite:////app/ci.db \
             -e JWT_SECRET_KEY=ci-test-secret \
-            -p 5000:5000 querysure:ci
+            -p 5001:5000 querysure:ci
+          trap 'docker rm -f querysure-ci >/dev/null 2>&1 || true' EXIT
+          # Connection resets/refusals while uvicorn starts are expected: retry, but fail clearly if it never gets healthy.
+          healthy=0
           for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:5000/api/health && break
+            if curl -fsS --max-time 5 http://127.0.0.1:5001/api/health; then healthy=1; break; fi
             sleep 2
           done
-          curl -fsS http://127.0.0.1:5000/api/evaluation/product-summary
-          docker exec querysure-ci test "$(id -u)" = "10001"
-          docker rm -f querysure-ci
+          if [ "$healthy" != 1 ]; then
+            echo "::error::API did not become healthy within 30 attempts"
+            docker logs querysure-ci
+            exit 1
+          fi
+          if ! curl -fsS --max-time 30 http://127.0.0.1:5001/api/evaluation/product-summary; then
+            echo "::error::Evaluation endpoint failed"
+            docker logs querysure-ci
+            exit 1
+          fi
+          # UIDs read inside the container: a new process, and the running server (PID 1, effective UID). The old check
+          # was `docker exec ... test "$(id -u)" = "10001"`, where the runner's shell expanded $(id -u) to its own UID.
+          exec_uid="$(docker exec querysure-ci id -u)"
+          server_uid="$(docker exec querysure-ci python -c "print([l.split()[2] for l in open('/proc/1/status') if l.startswith('Uid:')][0])")"
+          if [ "$exec_uid" != "10001" ] || [ "$server_uid" != "10001" ]; then
+            echo "::error::container must run as UID 10001 (exec: $exec_uid, server: $server_uid)"
+            exit 1
+          fi
