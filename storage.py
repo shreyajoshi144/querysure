@@ -118,6 +118,112 @@ def _parse_remote(ref: str, user_id: Optional[str] = None) -> Tuple[str, str]:
     return bucket, key
 
 
+# Workspace-owned objects (Sprint 3): <prefix>/ws/<workspace_id>/<dataset_id>/curated-<run_id>.db and .../raw/<run_id>.<ext>.
+# Access is decided by the catalog (workspaces.session_db_path), never by this layout; the layout is only re-validated here so a
+# tampered reference can never reach another object. The workspace in the path is the one the dataset was CREATED in.
+_WS_REL = re.compile(rf"^ws/(?P<ws>{_UUID})/(?P<ds>{_UUID})/(?P<name>(?:raw/)?[A-Za-z0-9._-]{{1,80}})$")
+
+
+def _parse_ws(ref: Optional[str]):
+    """(workspace_id, dataset_id, name, relative_key) for a valid workspace object reference of THIS deployment, else None."""
+    if not ref:
+        return None
+    if is_remote(ref):
+        m = _S3_REF.match(ref)
+        if not m or m.group("bucket") != BUCKET or not m.group("key").startswith(PREFIX + "/"):
+            return None
+        rel = m.group("key")[len(PREFIX) + 1:]
+    else:
+        try:
+            root, real = os.path.realpath(UPLOAD_DIR), os.path.realpath(ref)
+            if os.path.commonpath([root, real]) != root:
+                return None
+        except ValueError:
+            return None
+        rel = os.path.relpath(real, root).replace(os.sep, "/")
+    m = _WS_REL.match(rel)
+    return (m.group("ws"), m.group("ds"), m.group("name"), rel) if m else None
+
+
+def is_workspace_ref(ref: Optional[str]) -> bool:
+    return _parse_ws(ref) is not None
+
+
+def store_workspace_object(local_path: str, workspace_id: str, dataset_id: str, name: str, *, cache: bool = False) -> str:
+    """Move ``local_path`` into workspace storage and return its reference. s3: uploaded (``cache=True`` keeps the local file as
+    the read cache, for a curated database about to be opened); local: moved under uploads/ws/. Raises StorageError."""
+    rel = f"ws/{workspace_id}/{dataset_id}/{name}"
+    if BACKEND != "s3":
+        dest = os.path.join(UPLOAD_DIR, *rel.split("/"))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.move(local_path, dest)
+        return dest
+    key = f"{PREFIX}/{rel}"
+    try:
+        _client().upload_file(local_path, BUCKET, key)
+    except _client_error_types() as e:
+        logger.error("workspace object upload to s3 failed: %s", e)
+        raise StorageError(str(e)) from e
+    if cache:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        os.replace(local_path, _cache_path(key))
+        _evict_cache(protect=_cache_path(key))
+    return f"s3://{BUCKET}/{key}"
+
+
+def delete_workspace_object(ref: Optional[str]) -> bool:
+    """Best-effort removal of one workspace object (an old curated version, an expired raw file). Never raises."""
+    parsed = _parse_ws(ref)
+    if not parsed:
+        return False
+    try:
+        if is_remote(ref):
+            key = f"{PREFIX}/{parsed[3]}"
+            if BACKEND == "s3":
+                _client().delete_object(Bucket=BUCKET, Key=key)
+            cp = _cache_path(key)
+            if os.path.exists(cp):
+                os.remove(cp)
+        elif os.path.exists(ref):
+            os.remove(ref)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("could not delete workspace object: %s", type(e).__name__)
+        return False
+
+
+def delete_workspace_tree(ref: str) -> None:
+    """STRICT removal of everything a dataset owns (every curated version and raw file). Raises on failure."""
+    parsed = _parse_ws(ref)
+    if not parsed:
+        raise DatasetUnavailable("Not a workspace dataset reference.")
+    prefix = f"ws/{parsed[0]}/{parsed[1]}/"
+    if not is_remote(ref):
+        tree = os.path.join(UPLOAD_DIR, *prefix.split("/"))
+        if os.path.isdir(tree):
+            shutil.rmtree(tree)
+        for parent in (os.path.dirname(tree.rstrip(os.sep)), os.path.join(UPLOAD_DIR, "ws")):   # tidy now-empty folders
+            try:
+                os.rmdir(parent)
+            except OSError:
+                pass
+        return
+    if BACKEND != "s3":
+        raise StorageError("Dataset references object storage, but the s3 backend is not enabled.")
+    try:
+        client = _client()
+        for page in client.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=f"{PREFIX}/{prefix}"):
+            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if keys:
+                client.delete_objects(Bucket=BUCKET, Delete={"Objects": keys})
+            for k in keys:
+                cp = _cache_path(k["Key"])
+                if os.path.exists(cp):
+                    os.remove(cp)
+    except _client_error_types() as e:
+        raise StorageError(str(e)) from e
+
+
 def _cache_path(key: str) -> str:
     # key was validated by _parse_remote (fixed layout, no traversal chars).
     return os.path.join(CACHE_DIR, key.replace("/", "__"))
@@ -136,8 +242,8 @@ def is_managed(ref: Optional[str]) -> bool:
     """True if `ref` is a dataset *we* created (an upload), as opposed to the
     bundled sample database or anything else. Only managed datasets may ever
     be deleted."""
-    if not ref:
-        return False
+    if not ref or is_workspace_ref(ref):
+        return False  # workspace datasets are deleted only through the catalog (workspaces.delete_dataset)
     if is_remote(ref):
         try:
             _parse_remote(ref)
@@ -262,6 +368,21 @@ def store_dataset(local_path: str, user_id: str) -> str:
 
 
 def ensure_local(ref: str, user_id: Optional[str] = None) -> str:
+    """Legacy (user-owned) datasets only. A workspace reference is refused here: those are opened through the catalog
+    (``ensure_local_workspace``) after a membership check, so a tampered session row can never read one."""
+    if is_workspace_ref(ref):
+        raise DatasetUnavailable("Dataset does not belong to this user.")
+    return _ensure_local(ref, user_id)
+
+
+def ensure_local_workspace(ref: str) -> str:
+    """Local path of a workspace-owned object. The CALLER must already have authorized access through the catalog."""
+    if not is_workspace_ref(ref):
+        raise DatasetUnavailable("Not a workspace dataset reference.")
+    return _ensure_local(ref, None)
+
+
+def _ensure_local(ref: str, user_id: Optional[str] = None) -> str:
     """Returns a local filesystem path the query engine can open for `ref`,
     downloading it from object storage if it isn't cached (first use after a
     restart/redeploy).
@@ -277,7 +398,8 @@ def ensure_local(ref: str, user_id: Optional[str] = None) -> str:
     if BACKEND != "s3":
         raise StorageError("Session references object storage, but the s3 backend is not enabled.")
 
-    _, key = _parse_remote(ref, user_id=user_id)
+    ws = _parse_ws(ref)
+    key = f"{PREFIX}/{ws[3]}" if ws else _parse_remote(ref, user_id=user_id)[1]
     cache_path = _cache_path(key)
     if os.path.exists(cache_path):
         try:

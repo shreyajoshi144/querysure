@@ -111,8 +111,13 @@ def _sqlite_file(tmp_path, builder) -> bytes:
 def test_csv_row_with_extra_field_is_rejected_not_silently_shifted(client):
     """`a,b / 1,2,3` used to load as (a=2, b=3): pandas swallowed the `1` as an
     implicit index and shifted every value one column left."""
-    r = _upload(client, _user(client), "r.csv", b"a,b\n1,2,3\n4,5\n")
-    assert r.status_code == 422 and "row 2" in r.json()["error"].lower()
+    # Sprint 3: the line is quarantined (reason `malformed_row`) and the rest imported; it is still never shifted into a=2, b=3.
+    h = _user(client)
+    body = _ok(client, h, "r.csv", b"a,b\n1,2,3\n4,5\n")
+    assert _sql(client, h, body["session_id"], "SELECT a, b FROM r").json()["rows"] == [{"a": 4, "b": 5}]
+    run = client.get(f"/api/datasets/{body['dataset_id']}/runs", headers=h).json()["runs"][0]
+    assert (run["records_read"], run["records_inserted"], run["reject_reasons"]) == (2, 1, {"malformed_row": 1})
+    assert _upload(client, h, "all.csv", b"a,b\n1,2,3\n4,5,6\n").status_code == 422     # nothing valid left: refused whole
 
 
 def test_csv_leading_zeros_survive_ingestion(client):
@@ -268,7 +273,7 @@ def test_conversion_and_profiling_run_off_the_event_loop(client, monkeypatch):
         except RuntimeError:
             return False
 
-    real_ingest, real_load = api_module.ingest_to_sqlite, api_module.load_database
+    real_load = api_module.load_database
 
     def spy_ingest(*a, **k):
         seen["ingest_on_loop"] = on_loop()
@@ -278,8 +283,10 @@ def test_conversion_and_profiling_run_off_the_event_loop(client, monkeypatch):
         seen["load_on_loop"] = on_loop()
         return real_load(*a, **k)
 
+    import ingest as ingest_module
     import jobs as jobs_module
-    monkeypatch.setattr(jobs_module, "ingest_to_sqlite", spy_ingest)
+    real_ingest = ingest_module.build_curated    # Sprint 3: conversion happens in the layered pipeline
+    monkeypatch.setattr(ingest_module, "build_curated", spy_ingest)
     monkeypatch.setattr(jobs_module, "load_database", spy_load)
     _ok(client, _user(client), "t.csv", b"a,b\n1,2\n")
     assert seen == {"ingest_on_loop": False, "load_on_loop": False}

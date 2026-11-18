@@ -17,6 +17,15 @@ Everything except `live` needs no API key, no network, no AWS, Redis or Docker.
 The sample retail database is built on the fly by the repo's own `create_retail.py`
 into a temp directory and discarded afterwards.
 
+## Platform AI features (Sprint 11)
+
+`python -m evaluation.platform [--suite retrieval|agent|safety|all] [--mode oracle|replay|live] [--out report.json]` evaluates retrieval over a fixed
+corpus, agent plan / tool selection and a 36-case safety-adversarial suite against the real code in a throw-away SQLite database. Offline suites cost
+nothing. `--mode live` calls the real provider chain, needs `--yes` and `GROQ_API_KEY`, and `--save-responses` records replies for free re-scoring with
+`--mode replay --responses file.json`. Oracle mode is a harness self-check (100% by construction). Latest numbers: `docs/baseline/platform_eval.txt`.
+
+`--suite answers` (Sprint 13) scores cited answers: retrieval, the real prompt, the model's reply, the real citation validator. It reports parse rate, whether a cited passage holds the gold fact (`cites_gold`), whether the answer states it literally (`states_fact`, a floor because paraphrases count as misses), and how often an off-topic question that still retrieves text gets a grounded answer instead of "insufficient". `--limit N` bounds live spend. In oracle mode a perfect model scores the retrieval ceiling (about 0.86 `cites_gold`), not 100%. `scripts/live_quality.sh` runs this, the agent plans and the SQL benchmark against Groq after a confirmation prompt and writes `docs/baseline/live_quality.txt`; **it has not been run in this repository**, so no live figure exists for plans or answers.
+
 ## Read this before quoting a number
 
 | Mode | What produces the SQL | What the numbers mean |
@@ -219,6 +228,7 @@ python -m evaluation.multiformat              # tuned set: candidate SQL supplie
 python -m evaluation.multiformat --holdout    # held-out questions, never used to tune the pipeline
 python -m evaluation.multiformat --negatives  # deliberately wrong SQL: is it flagged?
 python -m evaluation.multiformat --live --yes [--holdout] [--delay 20]   # the configured LLM writes the SQL (costs money)
+python -m evaluation.multiformat --live --yes --holdout --compare groq --compare openai:gpt-4o-mini   # same cases per model, side by side
 python -m evaluation.multiformat --replay live.json [--holdout]         # re-check SQL saved by --live --json (free)
 ```
 

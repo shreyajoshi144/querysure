@@ -177,6 +177,14 @@ def test_module_entrypoint_runs_with_no_credentials_in_a_fresh_process():
     assert proc.returncode == 0, proc.stderr
 
 
+def _repo_dotenv_has_llm_key() -> bool:
+    from dotenv import dotenv_values
+    path = os.path.join(REPO_ROOT, ".env")
+    keys = ("GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY")
+    return os.path.isfile(path) and any(dotenv_values(path).get(k) for k in keys)
+
+
+@pytest.mark.skipif(_repo_dotenv_has_llm_key(), reason="the repository .env supplies credentials to `live` by design")
 def test_module_entrypoint_live_without_credentials_fails_cleanly_in_a_fresh_process():
     proc = subprocess.run([sys.executable, "-m", "evaluation", "live", "--no-write"],
                           cwd=REPO_ROOT, env=_clean_env(), capture_output=True, text=True, timeout=120)

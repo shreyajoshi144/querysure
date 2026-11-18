@@ -1,7 +1,6 @@
 """Pydantic request bodies for endpoints that historically parsed JSON by hand."""
 from __future__ import annotations
 
-from typing import Any
 
 from pydantic import BaseModel, ConfigDict, EmailStr, field_validator
 

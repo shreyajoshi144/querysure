@@ -44,6 +44,8 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}        # EMAIL_PROVIDER=brevo or resend (HTTPS mail API)
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}          # comma-separated; these accounts can open /ops
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5001}
       CORS_ALLOWED_ORIGINS: "*"
       DAILY_LLM_BUDGET_USD: "2.00"
@@ -53,6 +55,7 @@ services:
       # API process (JOB_EXECUTION=auto); see docs/OPERATIONS.md "Render free demo mode".
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-10}
       MAX_UPLOAD_XLSX_MB: ${MAX_UPLOAD_XLSX_MB:-10}
+      MAX_UPLOAD_PARQUET_MB: ${MAX_UPLOAD_PARQUET_MB:-10}
       JOB_EXECUTION: ${JOB_EXECUTION:-auto}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -61,6 +64,15 @@ services:
       GROQ_FALLBACK_MODEL: ${GROQ_FALLBACK_MODEL:-openai/gpt-oss-20b}
       OPENAI_FALLBACK_MODEL: ${OPENAI_FALLBACK_MODEL:-gpt-4o-mini}
       ANTHROPIC_FALLBACK_MODEL: ${ANTHROPIC_FALLBACK_MODEL:-claude-haiku-4-5-20251001}
+      # Optional (Sprint 2): Gemini / xAI need a key AND a model id; AI_TASK_ROUTES pins providers per task.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      XAI_MODEL: ${XAI_MODEL:-}
+      AI_TASK_ROUTES: ${AI_TASK_ROUTES:-}
+      # Sprint 4: key for saved database connections (see docs/ENVIRONMENT.md); connector network guard
+      CONNECTIONS_ENCRYPTION_KEY: ${CONNECTIONS_ENCRYPTION_KEY:-}
+      CONNECTOR_ALLOW_PRIVATE_HOSTS: ${CONNECTOR_ALLOW_PRIVATE_HOSTS:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -113,6 +125,7 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}        # the worker sends the e-mails
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:5001}
       CORS_ALLOWED_ORIGINS: "*"
       DAILY_LLM_BUDGET_USD: "2.00"
@@ -127,6 +140,35 @@ services:
     # worker waits for api to be healthy before touching the database.
     restart: unless-stopped
     # Dev e-mail (EMAIL_PROVIDER=dev) is written inside THIS container: docker compose exec worker sh -c 'cat .dev_mail/*.eml'
+
+  # Sprint 5: runs the dataset sync schedules (python scheduler.py). One instance is enough; extra instances are harmless because a
+  # due schedule is claimed with a single conditional UPDATE. Needs an always-on host, so it is not part of the Render free demo.
+  scheduler:
+    build: .
+    command: ["python", "scheduler.py"]
+    healthcheck:
+      # healthy = the loop touched its heartbeat file within the last 3 minutes (scheduler.py)
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(0 if time.time()-os.path.getmtime('/tmp/qs-scheduler.alive')<180 else 1)"]
+      interval: 60s
+      start_period: 60s
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-querysure}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (copy .env.example)}@db:5432/${POSTGRES_DB:-querysure}
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in .env (copy .env.example)}
+      CONNECTIONS_ENCRYPTION_KEY: ${CONNECTIONS_ENCRYPTION_KEY:-}
+      CONNECTOR_ALLOW_PRIVATE_HOSTS: ${CONNECTOR_ALLOW_PRIVATE_HOSTS:-false}
+      SCHEDULER_TICK_SECONDS: ${SCHEDULER_TICK_SECONDS:-30}
+      SCHEDULER_MIN_INTERVAL_MINUTES: ${SCHEDULER_MIN_INTERVAL_MINUTES:-5}
+      SCHEDULER_MAX_CONSECUTIVE_FAILURES: ${SCHEDULER_MAX_CONSECUTIVE_FAILURES:-5}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   querysure_pgdata:

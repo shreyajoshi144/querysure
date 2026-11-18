@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 SQLITE_KEYWORDS = frozenset("""
 abort action add after all alter always analyze and as asc attach autoincrement before begin between by cascade case cast check
@@ -56,7 +56,7 @@ def compile_check(sql: str, schema: dict) -> Tuple[bool, Optional[str]]:
     """Return (ok, error_message). Never raises."""
     try:
         con = _build_twin(schema)
-    except Exception as exc:  # twin could not be built (exotic type names) -> do not block on our own limitation
+    except Exception:  # twin could not be built (exotic type names) -> do not block on our own limitation
         return True, None
     try:
         con.execute("EXPLAIN " + sql.strip().rstrip(";")).fetchall()

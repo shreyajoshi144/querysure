@@ -60,9 +60,9 @@
 
     <div class="hero-inner">
       <div class="hero-copy-column">
-        <p class="hero-eyebrow"><span class="eyebrow-pulse" aria-hidden="true"></span>Natural-language analytics you can audit</p>
+        <p class="hero-eyebrow"><span class="eyebrow-pulse" aria-hidden="true"></span>AI for your data and documents, with the working shown</p>
         <h1>Ask a question.<br><em>Inspect the path.</em></h1>
-        <p class="hero-copy">Ask in plain English. QuerySure writes read-only SQL, checks it before it runs, and keeps the working beside every answer, so you can see exactly how it got there.</p>
+        <p class="hero-copy">Ask in plain English. QuerySure writes read-only SQL and checks it before it runs, answers from your documents with citations, and keeps the working beside every answer.</p>
         <div class="hero-ctas">
           <button class="btn-primary btn-lg hero-primary" id="heroPrimaryCta" type="button">Try QuerySure</button>
           <button class="btn-secondary btn-lg hero-secondary" id="heroSecondaryCta" type="button">See how it works</button>
@@ -117,8 +117,8 @@ ORDER BY orders DESC</code></pre>
     <ul class="hero-ticker" aria-label="Guarantees by design">
       <li>Read-only execution</li>
       <li>AST-validated SQL</li>
-      <li>Recorded answer trace</li>
-      <li>Limits enforced server-side</li>
+      <li>Cited document answers</li>
+      <li>Human-approved AI actions</li>
     </ul>
   </header>
 
@@ -133,7 +133,7 @@ ORDER BY orders DESC</code></pre>
       <div class="problem-grid" data-reveal>
         <div class="problem-copy">
           <p>Natural-language analytics goes wrong when a model guesses at your schema, writes SQL nobody checked, or hands back a number with no working.</p>
-          <p>QuerySure grounds each question in your connected schema and semantic layer, validates the SQL before it runs, scores data reliability, and records how the answer was produced.</p>
+          <p>QuerySure grounds each question in your connected schema and semantic layer, validates the SQL before it runs, scores data reliability, and records how the answer was produced. Answers from documents must cite the passages they use, or they are not shown.</p>
         </div>
         <div class="differentiator-list">
           <div><i>i</i><strong>Schema and semantic grounding</strong><small>The model sees the structure and meaning of your data, not a guess at it.</small></div>
@@ -244,14 +244,14 @@ ORDER BY orders DESC</code></pre>
     <section class="landing-section capabilities-section" id="features">
       <div class="section-tag" data-mark><span>04</span>Capabilities</div>
       <div class="section-heading" data-reveal>
-        <h2>An inspectable path from question to data.</h2>
-        <p>QuerySure connects a question to structured data through grounding, SQL generation, validation, read-only execution, result interpretation and an answer trace.</p>
+        <h2>Data, documents and actions, each with a record.</h2>
+        <p>Teams share datasets and documents in workspaces with roles. Every feature gives the model one narrow job and checks its output in code before you see it.</p>
       </div>
       <div class="capability-list" data-reveal>
-        <div><h3>Ground before generating</h3><p>Relevant schema and semantic context are assembled before SQL generation, instead of asking a model to guess at table or column meaning.</p></div>
-        <div><h3>Validate the SQL structure</h3><p>Generated SQL passes AST-level validation and read-only safeguards before it reaches your data.</p></div>
-        <div><h3>Keep execution and explanation apart</h3><p>The result comes from the query engine. Reliability signals and generated insights are recorded alongside it.</p></div>
-        <div><h3>Leave a record</h3><p>The workspace exposes the recorded path from question and grounding through SQL, validation, execution and answer.</p></div>
+        <div><h3>Ask your data</h3><p>Upload files or connect PostgreSQL, MySQL, a REST API or S3. Questions become grounded, validated, read-only SQL, and every import gets a data-quality report.</p></div>
+        <div><h3>Ask your documents</h3><p>Upload TXT, Markdown, PDF or Word files and chat with an assistant that cites numbered passages. An answer that cites nothing valid is withheld.</p></div>
+        <div><h3>Investigate a change</h3><p>Trend, comparison and breakdown reports run real queries and keep the SQL behind every fact. Possible causes are labelled unverified. Export as HTML or JSON.</p></div>
+        <div><h3>Act only with approval</h3><p>An agent plans with a fixed set of tools. Reading runs at once; syncing a dataset or deleting a document waits for someone with the right role to approve it. Every step is in the audit trail.</p></div>
       </div>
     </section>
 
@@ -262,16 +262,16 @@ ORDER BY orders DESC</code></pre>
         <p>Application services, persistent state, data engines, model providers and evaluation, working together without changing how you use the product.</p>
       </div>
       <div class="architecture-map" data-reveal>
-        <div class="architecture-node primary"><span>App</span><strong>FastAPI</strong><small>API, auth, pipeline</small></div>
+        <div class="architecture-node primary"><span>App</span><strong>FastAPI</strong><small>API, auth, roles, pipelines</small></div>
         <div class="architecture-row">
-          <div class="architecture-node"><span>State</span><strong>PostgreSQL</strong><small>Users, sessions, usage</small></div>
-          <div class="architecture-node"><span>Cache</span><strong>Redis</strong><small>Rate limits, shared state</small></div>
+          <div class="architecture-node"><span>State</span><strong>PostgreSQL</strong><small>Workspaces, audit, AI trace</small></div>
+          <div class="architecture-node"><span>Cache</span><strong>Redis</strong><small>Rate limits, budgets, job queue</small></div>
           <div class="architecture-node"><span>Data</span><strong>SQLite / Data Engine</strong><small>Query execution</small></div>
-          <div class="architecture-node"><span>Storage</span><strong>S3-compatible</strong><small>Dataset objects</small></div>
+          <div class="architecture-node"><span>Storage</span><strong>S3-compatible</strong><small>Versioned datasets, reports</small></div>
         </div>
         <div class="architecture-row bottom">
           <div class="architecture-node"><span>Models</span><strong>Groq · OpenAI · Anthropic</strong><small>Configured LLM providers</small></div>
-          <div class="architecture-node"><span>Evaluation</span><strong>Deterministic + DeepEval</strong><small>Benchmark and supplementary judges</small></div>
+          <div class="architecture-node"><span>Evaluation</span><strong>Deterministic + DeepEval</strong><small>Benchmark, retrieval and safety suites</small></div>
         </div>
       </div>
     </section>
@@ -281,7 +281,7 @@ ORDER BY orders DESC</code></pre>
       <div class="evaluation-header" data-reveal>
         <div>
           <h2>Evaluation is a separate engineering surface.</h2>
-          <p>The evaluation layer separates deterministic correctness from supplementary model-judge signals. DeepEval is supplementary, and synthetic cases expand coverage when generated. Coverage includes SQL validity, execution, result correctness, schema grounding, hallucinated identifiers and rejection or clarification behavior.</p>
+          <p>The evaluation layer separates deterministic correctness from supplementary model-judge signals. DeepEval is supplementary, and synthetic cases expand coverage when generated. Coverage includes SQL validity, execution, result correctness, schema grounding, hallucinated identifiers and rejection or clarification behavior, plus document-retrieval recall and a 36-case adversarial safety suite run against the real controls.</p>
         </div>
         <button class="btn-secondary evaluation-method-btn" id="evaluationMethodBtn" type="button">How we evaluate</button>
       </div>
@@ -300,8 +300,11 @@ ORDER BY orders DESC</code></pre>
         <h2>Questions worth answering before you connect data.</h2>
       </div>
       <div class="faq-list" data-reveal>
-        <details><summary>What is QuerySure?</summary><p>QuerySure turns natural-language questions into grounded, validated, read-only analytics queries and records the path behind the result.</p></details>
-        <details><summary>What data can I connect?</summary><p>You can use the bundled sample database or upload a CSV, JSON, Excel or SQLite file. The connected dataset is then used for schema grounding and read-only analysis.</p></details>
+        <details><summary>What is QuerySure?</summary><p>QuerySure answers questions about your data and documents. Data questions become grounded, validated, read-only queries; document questions get answers that cite their sources. The path behind each result is recorded.</p></details>
+        <details><summary>What data can I connect?</summary><p>You can use the bundled sample database, upload a CSV, JSON, Excel, Parquet or SQLite file, or connect PostgreSQL, MySQL, a REST API or an S3 bucket, with manual or scheduled syncs. Documents can be TXT, Markdown, PDF (text layer) or Word.</p></details>
+        <details><summary>Can the AI change my data on its own?</summary><p>No. Queries are read-only. The agent can propose a change, such as syncing a dataset or deleting a document, but it waits for approval from someone with the right role, and the role is checked again when it runs.</p></details>
+        <details><summary>How are document answers checked?</summary><p>The assistant must cite the passages it used; an answer that cites none of them is withheld. A citation shows where an answer came from, not that it is correct, so check important answers against the source.</p></details>
+        <details><summary>Can my team share data?</summary><p>Yes. Workspaces have viewer, analyst, admin and owner roles, a shared dataset catalog and knowledge hub, and an audit trail of who did what.</p></details>
         <details><summary>Does QuerySure run write queries?</summary><p>No. The execution path is guarded for read-only analytics; write operations are not part of the query flow.</p></details>
         <details><summary>How does QuerySure validate generated SQL?</summary><p>Generated SQL passes AST-level and read-only validation before it runs.</p></details>
         <details><summary>What does the reliability information mean?</summary><p>It surfaces the data-reliability signals QuerySure produces for a result. It is not a guarantee that an answer is correct.</p></details>
@@ -321,7 +324,7 @@ ORDER BY orders DESC</code></pre>
       <div class="pricing-grid" data-reveal>
         <article class="pricing-plan"><div class="pricing-plan-head"><span>Free</span><strong>$0 <small>/ month</small></strong></div><div class="pricing-limit">10 queries / day</div><p>Suitable for exploring QuerySure.</p><span class="pricing-availability">Available now</span></article>
         <article class="pricing-plan pricing-plan-featured"><div class="pricing-plan-head"><span>Pro</span><strong>$5 <small>/ month</small></strong></div><div class="pricing-limit">50 queries / day</div><p>For individual users who need more daily analytics.</p><span class="pricing-availability" id="proAvailability">Not yet available</span></article>
-        <article class="pricing-plan"><div class="pricing-plan-head"><span>Team</span><strong>Not available</strong></div><div class="pricing-limit">Planned, not offered</div><p>QuerySure has no shared workspaces, seats or organization accounts. Every account is a single user.</p><span class="pricing-availability">Not available</span></article>
+        <article class="pricing-plan"><div class="pricing-plan-head"><span>Team</span><strong>Not available</strong></div><div class="pricing-limit">Planned, not offered</div><p>Team billing, seats and organization accounts are not offered. Any account can create team workspaces with roles, a shared dataset catalog, a knowledge hub and an audit trail.</p><span class="pricing-availability">Not available</span></article>
         <article class="pricing-plan"><div class="pricing-plan-head"><span>Business</span><strong>Talk to us</strong></div><div class="pricing-limit">Custom usage and requirements</div><p id="businessContactText">Contact email not configured.</p><span class="pricing-availability">Arranged manually &middot; no self-serve checkout</span></article>
       </div>
     </section>
@@ -333,7 +336,7 @@ ORDER BY orders DESC</code></pre>
         <p>Authorization and execution controls live in the authenticated backend path, not in browser state.</p>
       </div>
       <div class="security-grid" data-reveal>
-        <div><span>Authentication</span><strong>Authenticated application access</strong><small>Protected workspace APIs use the account sign-in flow.</small></div>
+        <div><span>Authentication</span><strong>Authenticated application access</strong><small>Protected workspace APIs use the account sign-in flow and workspace roles.</small></div>
         <div><span>Data access</span><strong>Read-only query execution</strong><small>Generated SQL is validated before it reaches the execution path.</small></div>
         <div><span>Entitlements</span><strong>Server-side usage enforcement</strong><small>Daily limits come from trusted account state and persistent usage records.</small></div>
         <div><span>Billing</span><strong>Separated from authorization</strong><small>Billing state does not independently grant product entitlements.</small></div>
@@ -345,7 +348,7 @@ ORDER BY orders DESC</code></pre>
     <div class="sky-photo cta-photo" aria-hidden="true"></div>
     <div class="final-cta-panel">
       <h2>Your data. Your questions.<br>An answer you can inspect.</h2>
-      <p>Bring a structured dataset, ask a question, and follow the recorded path from grounding to result.</p>
+      <p>Bring a dataset or your documents, ask a question, and follow the recorded path from grounding to result.</p>
       <button class="btn-primary btn-lg" id="finalCta" type="button">Try QuerySure</button>
     </div>
   </section>
@@ -482,11 +485,15 @@ ORDER BY orders DESC</code></pre>
       <a class="nav-logo brand-link" id="workspaceLogo" href="#" title="Exit to home" aria-label="QuerySure, exit to home">
         <svg class="qs-mark" viewBox="0 0 32 32" aria-hidden="true"><rect x="9" y="11" width="3.4" height="12" rx="1.7" fill="url(#qsMarkGrad)"/><rect x="14.3" y="6.5" width="3.4" height="16.5" rx="1.7" fill="url(#qsMarkGrad)"/><rect x="19.6" y="14" width="3.4" height="9" rx="1.7" fill="url(#qsMarkGrad)"/><rect x="6.5" y="25.2" width="19" height="1.4" rx=".7" fill="#dce9ff" opacity=".9"/></svg><span class="wordmark">QuerySure</span>
       </a>
+      <div class="topnav-ws" id="topnavWs"></div>
       <nav class="topnav-tabs" id="workspaceNav" aria-label="Workspace">
-        <button type="button" class="nav-tab active" data-view="ask" id="navAsk">Ask</button>
-        <button type="button" class="nav-tab" data-view="datasets" id="navDatasets">Datasets</button>
-        <button type="button" class="nav-tab" data-view="evaluation" id="navEvaluation">Evaluation</button>
-        <button type="button" class="nav-tab" data-view="history" id="navHistory">History</button>
+        <button type="button" class="nav-tab active" data-view="workspace" data-ws-page="home" id="navWorkspace">Overview</button>
+        <button type="button" class="nav-tab" data-view="workspace" data-ws-page="connect" id="navConnect">Connect</button>
+        <button type="button" class="nav-tab" data-view="workspace" data-ws-page="explore" id="navDatasets">Explore</button>
+        <button type="button" class="nav-tab" data-view="workspace" data-ws-page="investigate" id="navInvestigate">Investigate</button>
+        <button type="button" class="nav-tab" data-view="workspace" data-ws-page="analyze" id="navAnalyze">Analyze</button>
+        <button type="button" class="nav-tab" data-view="ask" id="navAsk">Query</button>
+        <button type="button" class="nav-tab" data-view="workspace" data-ws-page="knowledge" id="navDocs">Knowledge</button>
       </nav>
       <div class="topnav-right">
         <div class="menu-wrap">
@@ -498,9 +505,10 @@ ORDER BY orders DESC</code></pre>
             <div class="menu-heading">Data source</div>
             <button class="btn-secondary btn-block" id="sampleBtn" type="button">Use sample database</button>
             <label class="upload-action-label btn-secondary btn-block" for="fileInput">Upload a file
-              <input type="file" id="fileInput" accept=".db,.sqlite,.sqlite3,.csv,.json,.xlsx,.xlsm">
+              <input type="file" id="fileInput" accept=".db,.sqlite,.sqlite3,.csv,.json,.xlsx,.xlsm,.parquet">
             </label>
             <p class="menu-help">CSV, JSON, Excel or SQLite.</p>
+            <p class="menu-help" id="uploadWorkspaceHint">Uploads are catalogued in your personal workspace.</p>
             <div class="workspace-llm-status" aria-label="LLM configuration status"><span>Model key</span><strong id="llmSidebarStatus">Optional</strong></div>
             <button class="menu-item" id="newSessionBtn" type="button">Flush session</button>
             <p class="menu-help">Flushing empties this session's dataset, question and results. Saved history is kept.</p>
@@ -517,6 +525,8 @@ ORDER BY orders DESC</code></pre>
           </button>
           <div class="menu-pop menu-pop-right" id="userMenu" hidden>
             <div class="menu-id"><span>Signed in as</span><strong id="userMenuEmail">—</strong></div>
+            <button type="button" class="menu-item js-nav" data-view="workspace" data-ws-page="team" id="navTeam">Team, audit and AI usage</button>
+            <button type="button" class="menu-item js-nav" data-view="evaluation" id="navEvaluation">Evaluation benchmark</button>
             <button type="button" class="menu-item menu-item-danger" id="signOutBtn">Sign out</button>
           </div>
         </div>
@@ -535,7 +545,19 @@ ORDER BY orders DESC</code></pre>
       <div class="workspace-view">
 
         <!-- ================= VIEW: ASK ================= -->
-        <section class="view active" id="view-ask" aria-label="Ask">
+        <section class="view" id="view-ask" aria-label="Query">
+          <div class="page-head">
+            <div>
+              <p class="page-kicker">Query</p>
+              <h2 class="view-title">Query your data in plain English</h2>
+              <p class="view-sub">Results come first. The SQL behind them, its safety checks, timing and confidence sit underneath in panels you can open.</p>
+            </div>
+            <div class="page-actions">
+              <button type="button" class="btn-quiet page-btn js-nav" data-view="history" id="navHistory">History</button>
+              <button type="button" class="page-btn page-btn-flow" data-flow="query" aria-expanded="false" aria-controls="flowAsk">How it works</button>
+            </div>
+          </div>
+          <div class="flow-panel" id="flowAsk" data-flow-host="ask" hidden></div>
           <div class="composer-card">
             <label class="composer-label" for="question">Ask a question about your data</label>
             <div class="composer-row">
@@ -559,6 +581,7 @@ ORDER BY orders DESC</code></pre>
             <div class="workflow-head">
               <h3 class="workflow-title" id="wfTitle">Workflow</h3>
               <span class="workflow-state" id="pipelineState" role="status" aria-live="polite">Idle</span>
+              <button type="button" class="btn-quiet wf-toggle" id="wfToggle" aria-expanded="true" aria-controls="wfScroll">Hide stages</button>
               <ul class="workflow-legend" aria-label="Status key">
                 <li class="lg-done"><i></i>Completed</li><li class="lg-active"><i></i>Running</li><li class="lg-warn"><i></i>Warning</li><li class="lg-error"><i></i>Failed</li><li class="lg-idle"><i></i>Pending</li>
               </ul>
@@ -632,14 +655,7 @@ ORDER BY orders DESC</code></pre>
             <section class="sheet-section" id="sec-answer">
               <h3 class="sheet-title">Answer</h3>
               <p class="answer-note" id="execNote">The answer appears here once the query has run.</p>
-              <div class="figure-row">
-                <div class="figure"><span class="figure-label">Rows returned</span><strong id="kpiRows">—</strong></div>
-                <div class="figure"><span class="figure-label">Query time</span><strong id="kpiExec">—</strong></div>
-                <div class="figure"><span class="figure-label">SQL confidence</span><strong id="kpiConfidence">—</strong></div>
-                <div class="figure"><span class="figure-label" title="Syntax, safety and schema checks only. This is NOT a measure of whether the answer is correct.">SQL safety checks</span><strong id="kpiReliability">—</strong></div>
-              </div>
-              <div class="note-block answer-findings"><div class="panel-title">Key findings</div><div class="bullet-note-list" id="findingsList"><div class="bullet-note-node"><span class="bullet-mark">·</span><span>Nothing to report yet.</span></div></div></div>
-            </section>
+</section>
 
             <section class="sheet-section" id="sec-result">
               <div class="sheet-title-row">
@@ -672,6 +688,18 @@ ORDER BY orders DESC</code></pre>
             </section>
 
             <div class="detail-stack" id="detailStack" aria-label="How this answer was produced">
+              <details class="detail-fold" id="sec-metrics">
+                <summary><span class="fold-title">Execution metrics and confidence</span><span class="fold-badge">rows · time · confidence · safety</span></summary>
+                <div class="fold-body">
+              <div class="figure-row">
+                <div class="figure"><span class="figure-label">Rows returned</span><strong id="kpiRows">—</strong></div>
+                <div class="figure"><span class="figure-label">Query time</span><strong id="kpiExec">—</strong></div>
+                <div class="figure"><span class="figure-label">SQL confidence</span><strong id="kpiConfidence">—</strong></div>
+                <div class="figure"><span class="figure-label" title="Syntax, safety and schema checks only. This is NOT a measure of whether the answer is correct.">SQL safety checks</span><strong id="kpiReliability">—</strong></div>
+              </div>
+              <div class="note-block answer-findings"><div class="panel-title">Key findings</div><div class="bullet-note-list" id="findingsList"><div class="bullet-note-node"><span class="bullet-mark">·</span><span>Nothing to report yet.</span></div></div></div>
+                </div>
+              </details>
               <details class="detail-fold" id="sec-sql">
                 <summary><span class="fold-title">Generated SQL</span><span class="fold-badge" id="badgeSql"></span></summary>
                 <div class="fold-body">
@@ -750,10 +778,104 @@ ORDER BY orders DESC</code></pre>
         </section>
 
         <!-- ================= VIEW: DATASETS ================= -->
-        <section class="view" id="view-datasets" aria-label="Dataset Explorer">
+
+
+        <!-- ================= VIEW: EVALUATION ================= -->
+        <section class="view" id="view-evaluation" aria-label="Evaluation">
           <div class="view-head">
             <div>
-              <h2 class="view-title">Datasets</h2>
+              <h2 class="view-title">Evaluation</h2>
+              <p class="view-sub">How QuerySure is measured against a fixed benchmark. This is separate from the Answer Trace, which explains a single query.</p>
+            </div>
+            <div class="page-actions">
+              <button class="btn-quiet page-btn" id="wsEvalRefresh" type="button">Refresh</button>
+              <button type="button" class="page-btn page-btn-flow" data-flow="evaluation" aria-expanded="false" aria-controls="flowEval">How it works</button>
+            </div>
+          </div>
+          <div class="flow-panel" id="flowEval" hidden></div>
+          <div id="wsEvalBody" class="eval-body"><p class="muted">Loading benchmark summary…</p></div>
+        </section>
+
+        <!-- ================= VIEW: HISTORY ================= -->
+        <section class="view" id="view-history" aria-label="Query history">
+          <div class="view-head">
+            <div>
+              <h2 class="view-title">History</h2>
+              <p class="view-sub">Questions you have run. Opening an entry shows what was saved; it does not run anything.</p>
+            </div>
+            <button class="btn-quiet" id="historyRefresh" type="button">Refresh</button>
+          </div>
+          <div class="history-layout">
+            <div class="history-list-pane">
+              <label class="composer-label" for="historySearch">Search history</label>
+              <input type="search" id="historySearch" class="history-search" placeholder="Search questions or SQL" maxlength="200" autocomplete="off">
+              <ul class="history-list" id="historyList" aria-live="polite"></ul>
+              <div class="history-more"><button class="btn-quiet" id="historyMore" type="button" hidden>Load more</button></div>
+            </div>
+            <div class="history-detail-pane" id="historyDetail" aria-live="polite">
+              <p class="muted">Select an entry to review it.</p>
+            </div>
+          </div>
+        </section>
+
+        <!-- ================= VIEW: WORKSPACE ================= -->
+        <section class="view active" id="view-workspace" aria-label="Workspace">
+          <div class="page-head">
+            <div>
+              <p class="page-kicker"><span id="wsTitle">Workspace</span> · <span id="wsPageName">Overview</span></p>
+              <h2 class="view-title" id="wsPageTitle">Overview</h2>
+              <p class="view-sub" id="wsPageSub"></p>
+              <p class="page-meta" id="wsSubtitle">Datasets, members and the audit trail of the selected workspace.</p>
+            </div>
+            <div class="page-actions">
+              <div class="ws-switch">
+                <label class="composer-label" for="wsSelect">Active workspace</label>
+                <select id="wsSelect" class="ws-input"></select>
+              </div>
+              <button type="button" class="page-btn page-btn-flow" id="wsFlowBtn" data-flow="home" aria-expanded="false" aria-controls="flowWs">How it works</button>
+            </div>
+          </div>
+          <div class="flow-panel" id="flowWs" data-flow-host="ws" hidden></div>
+          <div class="ws-message" id="wsMessage" role="status" aria-live="polite"></div>
+
+          <div class="ws-grid" id="wsGrid" data-page="home">
+            <section class="ws-card span-2 journey-card" id="wsJourneyCard" aria-labelledby="wsJourneyTitle" data-ws-page="home">
+              <div class="ws-card-head">
+                <h3 id="wsJourneyTitle">From a data source to a cited answer</h3>
+                <div class="ws-item-actions"><button type="button" class="page-btn page-btn-flow js-nav" data-view="workspace" data-ws-page="connect" id="wsStartBtn">Connect data</button><button type="button" class="page-btn js-nav" data-view="ask">Ask a question</button></div>
+              </div>
+              <p class="ws-help">Six workspaces, one path. Select a stage to see exactly what happens there, then open it.</p>
+              <div id="wsJourney"></div>
+            </section>
+            <section class="ws-card" id="wsSourcesCard" aria-labelledby="wsSourcesTitle" data-ws-page="home">
+              <div class="ws-card-head"><h3 id="wsSourcesTitle">Connected sources</h3><button class="btn-quiet js-nav" type="button" data-view="workspace" data-ws-page="connect">Manage</button></div>
+              <div id="wsSources" aria-live="polite"></div>
+            </section>
+            <section class="ws-card" id="wsSourceCard" aria-labelledby="wsSourceTitle" data-ws-page="connect">
+              <div class="ws-card-head"><h3 id="wsSourceTitle">Add a data source</h3></div>
+              <p class="ws-help">Files are imported into this workspace as a versioned dataset. CSV, JSON, Excel (XLSX/XLSM), Parquet or SQLite.</p>
+              <div class="ws-row source-actions" id="wsUploadRow">
+                <button class="btn-secondary" type="button" id="wsUploadBtn">Upload a data file</button>
+                <input type="file" id="wsUploadInput" accept=".db,.sqlite,.sqlite3,.csv,.json,.xlsx,.xlsm,.parquet" hidden>
+                <button class="btn-quiet" type="button" id="wsSampleBtn">Use the sample retail database</button>
+              </div>
+              <p class="ws-help source-note">The sample database is connected to this session for Query and Explore; it is not added to the workspace catalog.</p>
+            </section>
+
+            <section class="ws-card" id="wsOverviewCard" aria-labelledby="wsOverviewTitle" data-ws-page="home">
+              <div class="ws-card-head"><h3 id="wsOverviewTitle">Workspace health</h3><button class="btn-quiet" id="wsOverviewRefresh" type="button">Refresh</button></div>
+              <div id="wsOverview" aria-live="polite"></div>
+            </section>
+
+            <section class="ws-card" aria-labelledby="wsDatasetsTitle" data-ws-page="explore">
+              <div class="ws-card-head"><h3 id="wsDatasetsTitle">Workspace datasets</h3><button class="btn-quiet" id="wsRefresh" type="button">Refresh</button></div>
+              <p class="ws-help">Uploads made while this workspace is active are catalogued here. Members can see the catalog; each file stays readable only by the account that uploaded it.</p>
+              <div id="wsDatasets" aria-live="polite"></div>
+            </section>
+            <section class="ws-card span-2" id="wsSchemaCard" aria-labelledby="wsSchemaTitle" data-ws-page="explore">
+<div class="ws-card-head ds-head">
+            <div>
+              <h3 id="wsSchemaTitle">Schema explorer</h3>
               <p class="view-sub" id="dsSubtitle">Browse tables, columns, keys and a safe preview of the connected data.</p>
             </div>
             <div class="ds-stats" id="dsStats" hidden>
@@ -778,39 +900,183 @@ ORDER BY orders DESC</code></pre>
             <div class="ds-list" id="schemaList" role="list" aria-label="Tables"></div>
             <div class="ds-detail" id="dsDetail" aria-live="polite"></div>
           </div>
-        </section>
+                    </section>
 
-        <!-- ================= VIEW: EVALUATION ================= -->
-        <section class="view" id="view-evaluation" aria-label="Evaluation">
-          <div class="view-head">
-            <div>
-              <h2 class="view-title">Evaluation</h2>
-              <p class="view-sub">How QuerySure is measured against a fixed benchmark. This is separate from the Answer Trace, which explains a single query.</p>
-            </div>
-            <button class="btn-quiet" id="wsEvalRefresh" type="button">Refresh</button>
-          </div>
-          <div id="wsEvalBody" class="eval-body"><p class="muted">Loading benchmark summary…</p></div>
-        </section>
 
-        <!-- ================= VIEW: HISTORY ================= -->
-        <section class="view" id="view-history" aria-label="Query history">
-          <div class="view-head">
-            <div>
-              <h2 class="view-title">History</h2>
-              <p class="view-sub">Questions you have run. Opening an entry shows what was saved; it does not run anything.</p>
-            </div>
-            <button class="btn-quiet" id="historyRefresh" type="button">Refresh</button>
-          </div>
-          <div class="history-layout">
-            <div class="history-list-pane">
-              <label class="composer-label" for="historySearch">Search history</label>
-              <input type="search" id="historySearch" class="history-search" placeholder="Search questions or SQL" maxlength="200" autocomplete="off">
-              <ul class="history-list" id="historyList" aria-live="polite"></ul>
-              <div class="history-more"><button class="btn-quiet" id="historyMore" type="button" hidden>Load more</button></div>
-            </div>
-            <div class="history-detail-pane" id="historyDetail" aria-live="polite">
-              <p class="muted">Select an entry to review it.</p>
-            </div>
+            <section class="ws-card" id="wsRunsCard" aria-labelledby="wsRunsTitle" hidden data-ws-page="connect explore">
+              <div class="ws-card-head"><h3 id="wsRunsTitle">Import runs</h3><button class="btn-quiet" id="wsRunsClose" type="button">Close</button></div>
+              <p class="ws-help" id="wsRunsHelp"></p>
+              <div class="ws-form" id="wsSchedule" hidden>
+                <label class="composer-label" for="wsSchedSel">Automatic sync</label>
+                <div class="ws-row">
+                  <select id="wsSchedSel" class="ws-input"><option value="0">Off</option><option value="15">Every 15 minutes</option><option value="60">Every hour</option><option value="360">Every 6 hours</option><option value="1440">Every day</option></select>
+                  <button class="btn-secondary" type="button" id="wsSchedSave">Save</button>
+                </div>
+                <p class="ws-help" id="wsSchedHelp"></p>
+              </div>
+              <div id="wsQuality" aria-live="polite"></div>
+              <ul class="ws-list" id="wsRuns"></ul>
+              <div id="wsQuarantine" aria-live="polite"></div>
+            </section>
+            <section class="ws-card" id="wsConnCard" aria-labelledby="wsConnTitle" hidden data-ws-page="connect">
+              <div class="ws-card-head"><h3 id="wsConnTitle">Database connections</h3><button class="btn-quiet" id="wsConnRefresh" type="button">Refresh</button></div>
+              <p class="ws-help" id="wsConnHelp">PostgreSQL and MySQL, read-only. Passwords are encrypted and never shown again. Import a table once, then sync only what changed.</p>
+              <ul class="ws-list" id="wsConnections"></ul>
+              <form class="ws-form" id="wsConnForm" hidden autocomplete="off">
+                <label class="composer-label" for="wsConnName">New connection</label>
+                <div class="ws-row">
+                  <input type="text" id="wsConnName" class="ws-input" placeholder="Name" maxlength="120" required>
+                  <select id="wsConnType" class="ws-input" aria-label="Connection type"><option value="postgres">PostgreSQL</option><option value="mysql">MySQL / MariaDB</option><option value="rest">REST API</option><option value="s3">Amazon S3 / S3-compatible</option></select>
+                </div>
+                <div class="ws-row" id="wsConnJsonRow" hidden>
+                  <textarea id="wsConnJson" class="ws-input" rows="9" spellcheck="false" aria-label="Connection settings (JSON)" style="width:100%;font-family:var(--mono,monospace);font-size:12px"></textarea>
+                </div>
+                <div class="ws-row" id="wsConnDbRow">
+                  <input type="text" id="wsConnHost" class="ws-input" placeholder="Host" maxlength="253">
+                  <input type="number" id="wsConnPort" class="ws-input" placeholder="Port" min="1" max="65535" value="5432">
+                  <input type="text" id="wsConnDb" class="ws-input" placeholder="Database" maxlength="128">
+                </div>
+                <div class="ws-row">
+                  <input type="text" id="wsConnUser" class="ws-input" placeholder="User" maxlength="128" autocomplete="off">
+                  <input type="password" id="wsConnPass" class="ws-input" placeholder="Password" maxlength="1024" autocomplete="new-password">
+                  <select id="wsConnSsl" class="ws-input" aria-label="Encryption"><option value="require">TLS (require)</option><option value="verify-full">TLS (verify certificate)</option><option value="disable">No encryption</option></select>
+                  <button class="btn-secondary" type="submit" id="wsConnAdd">Save</button>
+                </div>
+              </form>
+              <form class="ws-form" id="wsImportForm" hidden>
+                <label class="composer-label" for="wsImpTable" id="wsImpTitle">Import a table</label>
+                <div class="ws-row">
+                  <select id="wsImpTable" class="ws-input" aria-label="Table"></select>
+                  <select id="wsImpMode" class="ws-input" aria-label="Mode"><option value="full_refresh">Full refresh</option><option value="incremental">Incremental</option></select>
+                  <select id="wsImpWm" class="ws-input" aria-label="Watermark column" hidden></select>
+                  <button class="btn-secondary" type="submit" id="wsImpBtn">Import</button>
+                  <button class="btn-quiet" type="button" id="wsImpCancel">Cancel</button>
+                </div>
+                <p class="ws-help" id="wsImpHelp"></p>
+              </form>
+            </section>
+            <input type="file" id="wsReimportInput" accept=".csv,.json,.xlsx,.xlsm,.parquet,.db,.sqlite,.sqlite3" hidden>
+
+            <section class="ws-card" id="wsKnowledgeCard" aria-labelledby="wsKnowledgeTitle" data-ws-page="knowledge">
+              <div class="ws-card-head"><h3 id="wsKnowledgeTitle">Documents</h3><button class="btn-quiet" id="wsKbRefresh" type="button">Refresh</button></div>
+              <p class="ws-help" id="wsKbHelp">Upload .txt, .md, .pdf or .docx files, then ask questions answered only from them, with citations. Only extracted text is kept.</p>
+              <ul class="ws-list" id="wsKbDocs"></ul>
+              <div class="ws-row" id="wsKbUploadRow" hidden>
+                <button class="btn-secondary" type="button" id="wsKbUploadBtn">Add document</button>
+                <input type="file" id="wsKbFile" accept=".txt,.md,.markdown,.pdf,.docx" hidden>
+              </div>
+              <form class="ws-form" id="wsKbAskForm">
+                <label class="composer-label" for="wsKbQuestion">Ask your documents</label>
+                <div class="ws-row">
+                  <input type="text" id="wsKbQuestion" class="ws-input" placeholder="e.g. How long do refunds take?" maxlength="1000" autocomplete="off" required>
+                  <button class="btn-secondary" type="submit" id="wsKbAsk">Ask</button>
+                  <button class="btn-quiet" type="button" id="wsKbSearch">Search passages</button>
+                </div>
+              </form>
+              <div id="wsKbAnswer" aria-live="polite"></div>
+            </section>
+
+            <section class="ws-card" id="wsChatCard" aria-labelledby="wsChatTitle" data-ws-page="knowledge">
+              <div class="ws-card-head"><h3 id="wsChatTitle">Assistant</h3><button class="btn-quiet" id="wsChatNew" type="button">New chat</button></div>
+              <p class="ws-help">Chats are private to you. The assistant answers follow-up questions from this workspace's documents, with citations. Data questions are answered with SQL from a dataset.</p>
+              <ul class="ws-list" id="wsChatList"></ul>
+              <div id="wsChatLog" class="ws-chat-log" aria-live="polite"></div>
+              <form class="ws-form" id="wsChatForm">
+                <label class="composer-label" for="wsChatInput">Message</label>
+                <div class="ws-row">
+                  <input type="text" id="wsChatInput" class="ws-input" placeholder="Ask about your documents" maxlength="1000" autocomplete="off" required>
+                  <button class="btn-secondary" type="submit" id="wsChatSend">Send</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="ws-card" id="wsUsageCard" aria-labelledby="wsUsageTitle" hidden data-ws-page="team">
+              <div class="ws-card-head"><h3 id="wsUsageTitle">AI usage</h3><button class="btn-quiet" id="wsUsageRefresh" type="button">Refresh</button></div>
+              <p class="ws-help">What the AI features of this workspace did in the last 30 days, from the provider-call records. Costs are estimates; no prompts or answers are shown.</p>
+              <div id="wsUsage" aria-live="polite"></div>
+            </section>
+
+            <section class="ws-card" id="wsInvCard" aria-labelledby="wsInvTitle" data-ws-page="analyze">
+              <div class="ws-card-head"><h3 id="wsInvTitle">Analyses</h3><button class="btn-quiet" id="wsInvRefresh" type="button">Refresh</button></div>
+              <p class="ws-help">Trend, period comparison or segment breakdown of a dataset. Figures are computed from the data with their SQL; hypotheses are labelled unverified; recommendations and limitations are kept apart.</p>
+              <ul class="ws-list" id="wsInvList"></ul>
+              <form class="ws-form" id="wsInvForm" hidden>
+                <div class="ws-row">
+                  <select id="wsInvDataset" class="ws-input" aria-label="Dataset"></select>
+                  <select id="wsInvKind" class="ws-input" aria-label="Kind"><option value="trend">Trend</option><option value="comparison">Period comparison</option><option value="breakdown">Segment breakdown</option></select>
+                  <select id="wsInvTable" class="ws-input" aria-label="Table"></select>
+                </div>
+                <div class="ws-row">
+                  <select id="wsInvAgg" class="ws-input" aria-label="Aggregate"><option value="sum">sum</option><option value="avg">average</option><option value="count">count</option></select>
+                  <select id="wsInvMeasure" class="ws-input" aria-label="Measure"></select>
+                  <select id="wsInvDate" class="ws-input" aria-label="Date column"></select>
+                  <select id="wsInvDim" class="ws-input" aria-label="Segment column"></select>
+                  <button class="btn-secondary" type="submit" id="wsInvRun">Investigate</button>
+                </div>
+              </form>
+              <div id="wsInvDetail" aria-live="polite"></div>
+            </section>
+
+            <section class="ws-card" id="wsAgentCard" aria-labelledby="wsAgentTitle" hidden data-ws-page="investigate">
+              <div class="ws-card-head"><h3 id="wsAgentTitle">Agent investigations</h3><button class="btn-quiet" id="wsAgentRefresh" type="button">Refresh</button></div>
+              <p class="ws-help">Describe a goal. The agent plans a few steps with registered tools only. Reading steps run at once; any step that changes something waits for your approval of the exact action.</p>
+              <form class="ws-form" id="wsAgentForm">
+                <label class="composer-label" for="wsAgentGoal">Goal</label>
+                <div class="ws-row">
+                  <input type="text" id="wsAgentGoal" class="ws-input" placeholder="e.g. Check the quality of my datasets and refresh stale ones" maxlength="1000" autocomplete="off" required>
+                  <button class="btn-secondary" type="submit" id="wsAgentRun">Plan &amp; run</button>
+                </div>
+              </form>
+              <ul class="ws-list" id="wsAgentRuns"></ul>
+              <div id="wsAgentDetail" aria-live="polite"></div>
+            </section>
+
+            <section class="ws-card" aria-labelledby="wsMembersTitle" data-ws-page="team">
+              <div class="ws-card-head"><h3 id="wsMembersTitle">Members</h3><span class="ws-role" id="wsYourRole"></span></div>
+              <ul class="ws-list" id="wsMembers"></ul>
+              <form class="ws-form" id="wsInviteForm" hidden>
+                <label class="composer-label" for="wsInviteEmail">Add an existing QuerySure account</label>
+                <div class="ws-row">
+                  <input type="email" id="wsInviteEmail" class="ws-input" placeholder="name@company.com" maxlength="320" autocomplete="off" required>
+                  <select id="wsInviteRole" class="ws-input" aria-label="Role">
+                    <option value="viewer">Viewer</option>
+                    <option value="analyst" selected>Analyst</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  <button class="btn-secondary" type="submit" id="wsInviteBtn">Add</button>
+                </div>
+                <p class="ws-help" id="wsInviteStatus" role="status" aria-live="polite"></p>
+              </form>
+              <p class="ws-help" id="wsPersonalNote" hidden>A personal workspace has one member: you. Create a team workspace to collaborate.</p>
+            </section>
+
+            <section class="ws-card" aria-labelledby="wsAuditTitle" id="wsAuditCard" hidden data-ws-page="home team">
+              <div class="ws-card-head"><h3 id="wsAuditTitle">Recent activity</h3></div>
+              <ul class="ws-list ws-audit" id="wsAudit"></ul>
+              <div class="history-more"><button class="btn-quiet" id="wsAuditMore" type="button" hidden>Load more</button></div>
+            </section>
+
+            <section class="ws-card" aria-labelledby="wsManageTitle" data-ws-page="team">
+              <div class="ws-card-head"><h3 id="wsManageTitle">Manage</h3></div>
+              <form class="ws-form" id="wsCreateForm">
+                <label class="composer-label" for="wsNewName">New team workspace</label>
+                <div class="ws-row">
+                  <input type="text" id="wsNewName" class="ws-input" placeholder="e.g. Finance analytics" maxlength="120" required>
+                  <button class="btn-secondary" type="submit" id="wsCreateBtn">Create</button>
+                </div>
+              </form>
+              <form class="ws-form" id="wsRenameForm" hidden>
+                <label class="composer-label" for="wsRenameName">Rename this workspace</label>
+                <div class="ws-row">
+                  <input type="text" id="wsRenameName" class="ws-input" maxlength="120" required>
+                  <button class="btn-secondary" type="submit" id="wsRenameBtn">Rename</button>
+                </div>
+              </form>
+              <div class="ws-row">
+                <button class="settings-copy-btn" type="button" id="wsLeaveBtn" hidden>Leave workspace</button>
+                <button class="settings-copy-btn settings-danger" type="button" id="wsDeleteBtn" hidden>Delete workspace…</button>
+              </div>
+            </section>
           </div>
         </section>
 

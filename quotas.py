@@ -21,7 +21,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session as OrmSession
 
 import config
-from db import Job, PipelineSession, User, _uuid_str
+from db import Dataset, Job, PipelineSession, User, _uuid_str
 
 # An ingestion job older than this is considered dead and stops counting (retries are capped at 3 and the
 # worker job timeout is 15 min, so a live job never legitimately outlasts this).
@@ -50,7 +50,8 @@ def lock_user_for_quota(db: OrmSession, user_id: str) -> None:
         db.query(User.id).filter(User.id == user_id).with_for_update().one()
 
 
-def usage_for_user(db: OrmSession, user_id: str, exclude_session_id: str | None = None) -> dict:
+def usage_for_user(db: OrmSession, user_id: str, exclude_session_id: str | None = None,
+                   exclude_dataset_id: str | None = None) -> dict:
     sessions = db.query(func.count(PipelineSession.id)).filter(PipelineSession.user_id == user_id).scalar() or 0
     q = db.query(PipelineSession.db_path, func.max(PipelineSession.dataset_bytes)).filter(
         PipelineSession.user_id == user_id,
@@ -62,6 +63,14 @@ def usage_for_user(db: OrmSession, user_id: str, exclude_session_id: str | None 
     rows = q.group_by(PipelineSession.db_path).all()
     datasets = len(rows)
     nbytes = int(sum(int(b or 0) for _, b in rows))
+    # Sprint 3: workspace-owned datasets are not tied to sessions; each is counted once, against its creator.
+    import storage
+    wq = db.query(Dataset.storage_ref, Dataset.bytes).filter(Dataset.created_by == user_id, Dataset.bytes.isnot(None))
+    if exclude_dataset_id:
+        wq = wq.filter(Dataset.id != exclude_dataset_id)
+    ws_rows = [(r, b) for r, b in wq.all() if storage.is_workspace_ref(r)]
+    datasets += len(ws_rows)
+    nbytes += int(sum(int(b or 0) for _, b in ws_rows))
 
     # uploads accepted but not yet ingested still occupy quota (the target session's own pending upload is a
     # replacement of the dataset being excluded above, so it is not double counted)
@@ -127,17 +136,23 @@ def create_session_with_quota(db: OrmSession, user) -> PipelineSession:
     return row
 
 
-def _enforce_upload_limit(db: OrmSession, user, incoming_bytes: int, session_id: str | None) -> None:
+def _enforce_upload_limit(db: OrmSession, user, incoming_bytes: int, session_id: str | None,
+                          exclude_dataset_id: str | None = None) -> None:
     limits = config.plan_quota(getattr(user, "plan", None))
-    used = usage_for_user(db, user.id, exclude_session_id=session_id)
+    used = usage_for_user(db, user.id, exclude_session_id=session_id, exclude_dataset_id=exclude_dataset_id)
     if used["datasets"] + 1 > limits["max_datasets"]:
         raise QuotaExceeded("datasets", limits["max_datasets"], used["datasets"],
                             f"You have reached your limit of {limits['max_datasets']} stored datasets. "
-                            "Delete a session to free a dataset slot.")
+                            "Delete a dataset (Explore page) to free a slot.")
     if used["dataset_bytes"] + int(incoming_bytes) > limits["max_dataset_bytes"]:
         raise QuotaExceeded("storage", limits["max_dataset_bytes"], used["dataset_bytes"],
                             f"This upload would exceed your {_fmt_bytes(limits['max_dataset_bytes'])} storage limit "
-                            f"({_fmt_bytes(used['dataset_bytes'])} already used). Delete a session to free space.")
+                            f"({_fmt_bytes(used['dataset_bytes'])} already used). Delete a dataset (Explore page) to free space.")
+
+
+def check_dataset_replacement(db: OrmSession, creator, new_bytes: int, dataset_id: str) -> None:
+    """Quota check for replacing dataset ``dataset_id`` (owned by ``creator``) with ``new_bytes``: the old version stops counting."""
+    _enforce_upload_limit(db, creator, new_bytes, None, exclude_dataset_id=dataset_id)
 
 
 def check_upload_quota(db: OrmSession, user, incoming_bytes: int, session_id: str | None) -> None:

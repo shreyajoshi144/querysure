@@ -109,6 +109,53 @@ Read by `docker-compose.yml` for variable substitution, not by `config.py`. Comp
 | `MAX_XLSX_UNCOMPRESSED_MB` | `512` | Zip-bomb guard: maximum uncompressed workbook size. |
 | `MAX_UPLOAD_MB` | `10` | Largest upload in MB, any format (each format also keeps its own ceiling: CSV/JSON/Excel 50 MB, SQLite 100 MB). The upload job holds the dataset in memory: a 10 MB file peaks at about 135-360 MB in one process, see [OPERATIONS.md](OPERATIONS.md#render-free-demo-mode). |
 | `MAX_UPLOAD_XLSX_MB` | `10` (= `MAX_UPLOAD_MB`) | Lower limit for Excel (`.xlsx`/`.xlsm`) only; the lower of the two applies. Excel parsing is much slower than CSV: on 0.1 CPU a 1 MB workbook took about 6 minutes. `render.yaml` sets `2`. |
+| `MAX_UPLOAD_PARQUET_MB` | `10` (= `MAX_UPLOAD_MB`) | Lower limit for Parquet (`.parquet`) only. Columnar compression means a small file can decode to far more memory; the decoded size is also capped at 64 MB. Measured: a 5.8 MB file (330,000 rows, 5 columns) peaked at 223 MB in the import process. |
+| `CONNECTIONS_ENCRYPTION_KEY` | `(unset)` | Fernet key that encrypts saved database passwords (several comma-separated keys allow rotation: the first encrypts, all decrypt). Required in production to create or use connections (the app still starts without it; connection routes answer `503 CONNECTIONS_NOT_CONFIGURED`). In development a key is derived from `JWT_SECRET_KEY`. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Losing the key makes saved passwords unreadable; they must be entered again. |
+| `CONNECTOR_ALLOW_PRIVATE_HOSTS` | `true` in development, `false` in production | When false, connections to private, loopback, link-local or otherwise non-public addresses are refused (every address the host resolves to is checked). |
+| `CONNECTION_TIMEOUT_SECONDS` | `10` | Connect timeout for source databases (1-60). |
+| `CONNECTION_QUERY_TIMEOUT_SECONDS` | `60` | Statement / read timeout for source queries (1-600). |
+| `CONNECTION_SYNC_MAX_SECONDS` | `900` | A sync running longer than this is stopped (30-3600). |
+| `CONNECTION_FETCH_BATCH_ROWS` | `5000` | Rows per keyset batch read from a source (100-50000). |
+| `INCREMENTAL_OVERLAP_SECONDS` | `300` | Timestamp watermarks are re-read this far back so late commits are not missed; upserts by primary key make the re-read idempotent (0-86400). |
+| `SOURCE_MAX_PAGES` | `500` | REST pages read in one run (1-5000); more stops the run with `TOO_MANY_PAGES`. |
+| `SOURCE_MAX_RESPONSE_MB` | `5` | Largest single REST response body accepted (1-100). |
+| `S3_SOURCE_MAX_OBJECTS` | `200` | Matching objects per S3 resource (1-5000); more is refused (`TOO_MANY_OBJECTS`): narrow the prefix. |
+| `S3_SOURCE_MAX_OBJECT_MB` | `= MAX_UPLOAD_MB` | Largest single S3 object read (the same ceiling as an upload). |
+| `S3_SOURCE_MAX_TOTAL_MB` | `50` | Total object bytes read in one S3 run. |
+| `SCHEDULER_ENABLED` | `false` | Run the scheduler as a thread inside the API process (development convenience). Production runs `python scheduler.py` (compose `scheduler` service) instead; either needs an always-on host, so scheduling is not available on Render's free plan. |
+| `SCHEDULER_TICK_SECONDS` | `30` | How often the scheduler looks for due schedules (1-600). |
+| `SCHEDULER_MIN_INTERVAL_MINUTES` | `5` | Shortest allowed schedule interval (1-1440). |
+| `SCHEDULER_MAX_CONSECUTIVE_FAILURES` | `5` | A schedule disables itself after this many failed runs in a row (1-100). |
+| `KNOWLEDGE_MAX_FILE_MB` | `10` | Largest knowledge document (1-50 MB). |
+| `KNOWLEDGE_MAX_DOCS_PER_WORKSPACE` | `200` | Documents per workspace. |
+| `KNOWLEDGE_MAX_CHUNKS_PER_DOC` | `3000` | Passages per document (a larger document is refused). |
+| `KNOWLEDGE_MAX_PDF_PAGES` | `500` | PDF page cap. |
+| `KNOWLEDGE_CHUNK_CHARS` / `KNOWLEDGE_CHUNK_OVERLAP` | `900` / `120` | Passage size and overlap in characters. |
+| `KNOWLEDGE_TOP_K` | `6` | Passages sent to the model per question (1-20). |
+| `KNOWLEDGE_MIN_SCORE` | `0.08` | Cosine floor: below it a passage is not relevant, and with no relevant passage no model is called. |
+| `KNOWLEDGE_SEARCH_MAX_CHUNKS` | `25000` | Passages one workspace may hold (an upload that would exceed it gets 409 `INDEX_FULL`); search covers all of them. The one-off index build is about 4 s at the default; see `docs/baseline/performance.txt`. |
+| `KNOWLEDGE_INDEX_CACHE_WORKSPACES` | `4` | Workspaces whose search index stays in memory per process (least recently used leave first). Raise it only after checking memory: a 25,000-passage index held about 285 MB in the benchmark (the build peaks near 520 MB), so on a 512 MB instance lower `KNOWLEDGE_SEARCH_MAX_CHUNKS` to about 5,000. |
+| `CONVERSATIONS_MAX_PER_USER_WORKSPACE` | `100` | Assistant conversations one user may keep per workspace. |
+| `CONVERSATION_MAX_MESSAGES` | `200` | Messages per conversation; beyond it the chat is full (409). |
+| `INVESTIGATION_MAX_ROWS` | `5000` | Rows an investigation query may return. |
+| `INVESTIGATION_QUERY_TIMEOUT_SECONDS` | `15` | Timeout of each investigation query. |
+| `INVESTIGATION_MAX_TABLE_ROWS` | `500000` | Tables with more rows are refused (422 `TABLE_TOO_LARGE`): a run scans the table several times. |
+| `INVESTIGATIONS_KEEP` | `50` | Investigations kept per dataset; older ones (and exports) are deleted. |
+| `AGENT_ENABLED` | `true` | Kill switch for the controlled agent (503 when off). |
+| `AGENT_MAX_STEPS` | `6` | Most steps a plan may have. |
+| `AGENT_GOAL_MAX_CHARS` | `1000` | Longest goal accepted. |
+| `AGENT_APPROVAL_TTL_HOURS` | `24` | A waiting approval expires after this many hours. |
+| `AGENT_RUNS_KEEP` | `100` | Runs kept per user and workspace; older ones are deleted. |
+| `CONVERSATION_HISTORY_TURNS` | `6` | Previous messages sent to the model as follow-up context (0 disables). |
+| `QUALITY_ENABLED` | `true` | Profile every new dataset version and store data-quality findings (Sprint 6). A failure never fails an import. |
+| `QUALITY_ROW_DROP_PCT` | `50` | Warn when a table loses at least this share of its rows versus the previous version (1-100). |
+| `QUALITY_NULL_SPIKE_POINTS` | `20` | Warn when a column's empty share rises by this many percentage points (1-100). |
+| `QUALITY_REJECT_WARN_PCT` / `QUALITY_REJECT_ERROR_PCT` | `5` / `20` | Reject-rate thresholds for a warning and an error (0 disables). |
+| `QUALITY_DUPLICATE_WARN_PCT` | `5` | Warn when this share of rows are exact duplicates (0 disables). |
+| `QUALITY_NUMERIC_SHIFT_PCT` | `50` | Warn when a numeric column's average moves this much versus the previous version. |
+| `QUALITY_DISTINCT_MAX_ROWS` | `2000000` | Skip distinct counts on tables larger than this. |
+| `QUALITY_REPORTS_KEEP` | `30` | Reports kept per dataset; older ones are trimmed (5-500). |
+| `SCHEDULER_HEARTBEAT_FILE` | `/tmp/qs-scheduler.alive` | File the scheduler touches every tick; the compose healthcheck reads its age. |
 | `MAX_XLSX_COMPRESSION_RATIO` | `100.0` | Zip-bomb guard: maximum compression ratio. |
 | `CONCURRENCY_GENERATE_SQL` | `2` | Concurrent SQL-generation requests per process. |
 | `CONCURRENCY_UPLOAD` | `1` | Concurrent uploads per process. |
@@ -134,7 +181,12 @@ Read by `docker-compose.yml` for variable substitution, not by `config.py`. Comp
 | `LOW_RETRIEVAL_CONFIDENCE` | `0.05` | Mean retrieval score below which an answer's SQL confidence is shown as Low. Calibrated on the 62-case benchmark. |
 | `LLM_MAX_OUTPUT_TOKENS` | `4000` | Output-token cap per Groq call (256-16000). OpenAI and Anthropic calls stay capped at 1500. |
 | `OPENAI_FALLBACK_MODEL` | `'gpt-4o-mini'` | OpenAI fallback model (OpenAI lists a 2027-01-14 shutdown for its snapshot). |
-| `LLM_PROVIDER_ORDER` | `'groq,openai,anthropic'` | Order the configured providers are tried in. Providers without a key are skipped; unknown names ignored. |
+| `LLM_PROVIDER_ORDER` | `'groq,openai,anthropic'` | Order the configured providers are tried in. Providers without a key are skipped; unknown names ignored. Known: `groq`, `openai`, `anthropic`, `gemini`, `xai`; any not listed are tried after the listed ones. |
+| `GEMINI_API_KEY` | `(unset)` | Google Gemini key, used through Google's OpenAI-compatible endpoint (documented by Google as beta) with JSON-Schema structured output. Ignored unless `GEMINI_MODEL` is also set. |
+| `GEMINI_MODEL` | `(unset)` | Gemini model id. No default: QuerySure does not assume which models exist. |
+| `XAI_API_KEY` | `(unset)` | xAI Grok key, used through `https://api.x.ai/v1` with JSON-Schema structured output. Ignored unless `XAI_MODEL` is also set. |
+| `XAI_MODEL` | `(unset)` | xAI model id. No default. |
+| `AI_TASK_ROUTES` | `(unset)` | Per-task routing: `task=provider[:model],...` separated by `;`, for tasks `sql_generation` and `sql_repair`, e.g. `sql_repair=openai:gpt-4.1-mini,groq`. A routed task tries only the listed providers in order (those without a key are skipped); unrouted tasks use `LLM_PROVIDER_ORDER`. Unknown task or provider names stop startup. |
 | `LLM_TRANSIENT_RETRIES` | `1` | Extra same-model retries (0-3) for timeouts, connection errors and 5xx. Auth, invalid model, 400, 429 and malformed replies fail over immediately. |
 | `LLM_RETRY_BACKOFF_SECONDS` | `0.5` | Base of the exponential backoff between those retries (0-5 s), capped by the request deadline. |
 | `LLM_MAX_ATTEMPTS_PER_REQUEST` | `8` | Hard cap on provider calls per question, shared by fallbacks, the JSON retry and SQL repair rounds. |

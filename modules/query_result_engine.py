@@ -50,8 +50,8 @@ def _authorizer(action: int, arg1, arg2, db_name, trigger):
         return sqlite3.SQLITE_OK
     if action == sqlite3.SQLITE_READ:
         table = (arg1 or "").lower()
-        if table.startswith("sqlite_") or table.startswith("pragma_"):
-            return sqlite3.SQLITE_DENY  # schema/internal tables are not user data
+        if table.startswith("sqlite_") or table.startswith("pragma_") or table.startswith("_qs_"):
+            return sqlite3.SQLITE_DENY  # schema/internal tables (incl. QuerySure's own quarantine/lineage) are not user data
         return sqlite3.SQLITE_OK
     if action == sqlite3.SQLITE_FUNCTION:
         if (arg2 or "").lower() in _DENIED_FUNCTIONS:

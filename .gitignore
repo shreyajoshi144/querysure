@@ -1,39 +1,34 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
-.env
-*.db
 .venv/
 venv/
 .pytest_cache/
-.DS_Store
-__MACOSX/
-node_modules/
-
-.dev_mail/
-node_modules/
-__pycache__/
-*.pyc
-.pytest_cache/
-uploads/
-.dev_mail/
-*.db
-reports/
-static/dist/
-
-# runtime data that must never be committed or shipped
-uploads/
-reports/
-dump.rdb
-static/dist/
-.env.*
-!.env.example
 .ruff_cache/
 
-# local-only files that must not reach the repository
-.idea/
+# Node (dev-only test dependency)
+node_modules/
+
+# Secrets: never commit; .env.example documents every variable
+.env
+.env.*
+!.env.example
+
+# Runtime data that must never be committed or shipped
+*.db
 *.sqlite
 *.sqlite3
+uploads/
+reports/
+.dev_mail/
+dump.rdb
+static/dist/
+
+# Local-only files
+.DS_Store
+__MACOSX/
+.idea/
 .deepeval/
 # the owner's evaluation data (tests/test_v108_multiformat_eval.py skips without it; see evaluation/README.md)
 tests/fixtures/user/

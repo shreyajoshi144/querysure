@@ -28,6 +28,7 @@ jobs:
           node-version: "20"
       - run: pip install -r requirements.txt -r requirements-dev.txt
       - run: npm ci
+      - run: python -m evaluation.platform --suite safety   # fails (exit 1) if any adversarial case is not blocked
       - run: pytest -q
         env:
           ENVIRONMENT: development
@@ -37,6 +38,18 @@ jobs:
   pytest-postgres:
     runs-on: ubuntu-latest
     services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: qs_source
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -prootpw"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
       postgres:
         image: postgres:16
         env:
@@ -62,6 +75,9 @@ jobs:
           TEST_DATABASE_URL: postgresql+psycopg2://querysure:querysure@127.0.0.1:5432/querysure
           DATABASE_URL: postgresql+psycopg2://querysure:querysure@127.0.0.1:5432/querysure
           JWT_SECRET_KEY: ci-test-secret
+          # Sprint 4: real source servers for the PostgreSQL and MySQL connector tests
+          TEST_SOURCE_POSTGRES_URL: postgresql://querysure:querysure@127.0.0.1:5432/querysure
+          TEST_SOURCE_MYSQL_URL: mysql://root:rootpw@127.0.0.1:3306/qs_source
 
   migrations:
     runs-on: ubuntu-latest

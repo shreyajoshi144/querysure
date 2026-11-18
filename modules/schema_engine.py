@@ -292,7 +292,7 @@ def load_database(db_path: str) -> Dict[str, Any]:
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;")
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND substr(name, 1, 4) <> '_qs_' ORDER BY name;")
     tables = [row[0] for row in cur.fetchall()]
     if len(tables) > MAX_TABLES:
         conn.close()

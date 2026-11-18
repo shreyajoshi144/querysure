@@ -1,0 +1,16 @@
+Platform evaluation (Sprint 11) -- offline, deterministic; regenerate with: python -m evaluation.platform --out docs/baseline/platform_eval.json
+
+RETRIEVAL (real knowledge.search; 8 documents, 100 questions; chunk 900 chars, score floor 0.08)
+  keyword    n=24, recall@1=1.0, recall@3=1.0, recall@6=1.0, mrr=1.0
+  paraphrase n=60, recall@1=0.55, recall@3=0.717, recall@6=0.75, mrr=0.632
+  offtopic   n=16, false_positive_rate=0.125
+  recall@3 95% intervals: {'keyword': [0.862, 1.0], 'paraphrase': [0.592, 0.815]}
+  vector index decision: not_justified  (rule: justified = a recall interval lies wholly below its threshold (or off-topic false positives exceed the cap); inconclusive = point estimate below the threshold but the interval still contains it; else not_justified)
+  note: the first 12 paraphrase questions gave recall@3 0.583 (interval 0.32-0.81, 'inconclusive'); 48 more were then added WITHOUT changing retrieval or thresholds.
+  misses (17): Can I get my money back if I changed my mind about; What should I do if someone steals my work laptop?; How quickly will someone respond if the whole syst; Can I plug in a thumb drive?; How many days off do I get when a relative dies?; What must I do if I put a private purchase on the ; When do I need a doctor's note for being ill?; Who must approve a period without pay?; Is it fine to tell a coworker my login?; Is it safe to work from a cafe?; Is there somebody assigned to help me settle in?; How soon do you reply to a medium-priority ticket?; Where do I find out about scheduled downtime?; For how many days are copies of the database store; Who can sign supplier agreements?; Where can I see approved suppliers?; How many days do we have to pay suppliers?
+
+AGENT PLANS (mode=oracle: gold plan as the reply; a harness self-check, NOT a model score)
+  valid=1.0 exact_tool_set=1.0 precision=1.0 recall=1.0 id_args=1.0 write_overreach=0.0
+
+SAFETY ADVERSARIAL (36 cases against real controls): blocked 36/36
+  {'plan_validation': '14/14', 'approval_gate': '5/5', 'prompt_fence': '4/4', 'answer_validation': '4/4', 'sql_identifiers': '5/5', 'isolation': '4/4'}

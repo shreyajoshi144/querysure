@@ -65,10 +65,13 @@ async function clickAtTop(sel) {
   await page.click(sel);
 }
 
+// @sparticuz/chromium ships a Linux x64 build (what CI uses). On macOS/Windows set CHROME_PATH to a local Chrome.
+const localChrome = process.env.CHROME_PATH;
 const browser = await puppeteer.launch({
-  executablePath: await chromium.executablePath(),
-  args: [...chromium.args, '--no-sandbox'],
-  headless: 'shell',
+  executablePath: localChrome || await chromium.executablePath(),
+  // Recent desktop Chrome restores Back from bfcache without the load event goBack() waits for, so local runs turn it off.
+  args: localChrome ? ['--no-sandbox', '--headless=new', '--disable-features=BackForwardCache'] : [...chromium.args, '--no-sandbox'],
+  headless: localChrome ? true : 'shell',
 });
 const page = await browser.newPage();
 page.setDefaultNavigationTimeout(90000);   // v1.0.7: software-rendered headless Chromium can take >30s to settle the animated landing page
@@ -106,6 +109,9 @@ page.on('request', (req) => {
     if (req.isNavigationRequest()) providerUrl = u;
     return req.respond({ status: 200, contentType: 'text/html', body: '<h1>provider checkout</h1>' });
   }
+  // A local Chrome has internet access that CI's sandbox does not: web fonts and Google sign-in would keep the page
+  // from ever reaching network idle. Keep local runs offline like CI.
+  if (localChrome && !/^(https?:\/\/(127\.0\.0\.1|localhost)[:/]|data:|blob:)/.test(u)) return req.abort();
   req.continue();
 });
 
@@ -125,7 +131,7 @@ try {
   ok('assets are content-addressed', assets.filter((u) => u.includes('/static/')).every((u) => /\?v=[0-9a-f]{10}$|\.[0-9a-f]{10}\.min\.(js|css)$/.test(u)), assets.join(' '));
   const pricing = await page.$eval('#pricing', (e) => e.innerText);
   ok('four pricing cards', (await page.$$('#pricing .pricing-plan')).length === 4);
-  ok('Team promise removed', /no shared workspaces, seats or organization accounts/i.test(pricing) && !/\$15/.test(pricing) && !/For teams/.test(pricing), pricing);
+  ok('Team promise removed', /Team billing, seats and organization accounts are not offered/i.test(pricing) && !/\$15/.test(pricing) && !/For teams/.test(pricing), pricing);
   ok('no "coming soon" fiction', !/coming soon/i.test(pricing));
   ok('Pro availability reflects billing_enabled', await waitFor(page, () => document.getElementById('proAvailability')?.textContent.includes('Available'), null, 5000));
 
@@ -181,6 +187,7 @@ try {
   step = 'pipeline';
   await viaMenu('dataMenuBtn', '#sampleBtn');
   ok('sample dataset connects', await waitFor(page, () => Number(document.getElementById('dbTables')?.textContent) > 0, null, 30000));
+  await page.click('#navAsk');   // sign-in and reload land on Overview; Query is its own workspace
   await page.type('#question', 'total sales amount by region');
   // Record every scrollIntoView the app makes during this run, and whether the report had already finished at the time.
   await page.evaluate(() => {
@@ -226,6 +233,8 @@ try {
 
   // ---- connected, accessible, clickable pipeline: selecting a stage shows what it actually did; the answer stays visible
   step = 'stages';
+  // Once the answer is in, the stages fold away so the result comes first; open them to inspect each stage.
+  await page.evaluate(() => { if (document.getElementById('runProgress').classList.contains('is-collapsed')) document.getElementById('wfToggle').click(); });
   const stageInfo = await page.$$eval('#pipeList .stage-btn', (bs) => bs.map((b) => ({ tag: b.tagName, label: b.getAttribute('aria-label'), pressed: b.getAttribute('aria-pressed') })));
   ok('eight workflow nodes are real buttons with status in their accessible name', stageInfo.length === 8 && stageInfo.every((s) => s.tag === 'BUTTON' && /: (completed|skipped|failed|running|pending|warning|no details)$/.test(s.label)), JSON.stringify(stageInfo));
   ok('executed stages report completed', stageInfo.filter((s) => /completed|warning/.test(s.label)).length >= 8, JSON.stringify(stageInfo.map((s) => s.label)));
@@ -363,6 +372,7 @@ try {
   ok('after the daily reset the usage shows 0 again', await waitFor(page, () => /^0\/10/.test(document.getElementById('topbarUsage')?.textContent || ''), null, 45000), await page.$eval('#topbarUsage', (e) => e.textContent));
   await viaMenu('dataMenuBtn', '#sampleBtn');
   await waitFor(page, () => Number(document.getElementById('dbTables')?.textContent) > 0, null, 30000);
+  await page.click('#navAsk');   // sign-in and reload land on Overview; Query is its own workspace
   await page.type('#question', 'total sales amount by region');
   await clickAtTop('#analyzeBtn');
   ok('after the reset queries run again', await waitFor(page, () => document.querySelectorAll('#resultsTable tbody tr').length > 0, null, 60000));

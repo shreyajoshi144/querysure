@@ -1,0 +1,25 @@
+negative cases: 24  detected (detectable): 20/20  detected (hard): 1/4  of which corrected to the right answer: 2
+  DETECTED neg-x1  wrong date column                                        Plan requires a date range on start_date: 2024-02-01 to 2024-02-29.; verification=mismatch
+  DETECTED neg-x2  range drops 28-29 Feb                                    verification=mismatch
+  DETECTED neg-x3  value spelled differently from the data                  Filter on project_name uses 'marketing'; the stored value is 'Marketing'.; The value 'marketing' does not exist in project_management_sample_data.project_name. 
+  DETECTED neg-x4  ascending instead of descending                          Plan requires ORDER BY DESC.; The question asks for the highest values but ORDER BY is ascending.
+  DETECTED neg-x5  SUM instead of AVG                                       Plan requires AVG but the SQL does not use it.; The question asks for an average but the SQL has no AVG() or division.
+  missed   neg-x6  counts all tasks, completion filter dropped             (hard) 
+  DETECTED neg-j1  LIMIT 3 instead of 5                                     Plan requires LIMIT 5, SQL has LIMIT 3.
+  DETECTED neg-j2  threshold missing the million multiplier                 Filter on population compares with 50; the question implies 5e+07 (check percent scale).
+  DETECTED neg-j3  value spelled differently from the data                  Filter on name uses 'germany'; the stored value is 'Germany'.; The value 'germany' does not exist in european_countries.name. Stored value(s) closest to it: 'Ge
+  DETECTED neg-j4  ascending instead of descending                          Plan requires ORDER BY DESC.; The question asks for the highest values but ORDER BY is ascending.; verification=mismatch
+  DETECTED neg-j5  SUM instead of AVG                                       The question asks for an average but the SQL has no AVG() or division.
+  missed   neg-j6  EU condition dropped                                    (hard) 
+  DETECTED neg-c1  LIMIT 3 instead of 5                                     Plan requires LIMIT 5, SQL has LIMIT 3.
+  DETECTED neg-c2  'unadjusted' filter dropped (triple counts adjusted series)  corrected deterministically (filtered group, series_title_4 to one value); result matches the independent answer
+  DETECTED neg-c3  highest instead of lowest                                Plan requires ORDER BY ASC.; The question asks for the lowest values but ORDER BY is descending.
+  DETECTED neg-c4  Level 1 and Level 2 hierarchies mixed                   (hard) corrected deterministically (filtered group to one value); result matches the independent answer
+  DETECTED neg-n1  order date used for 'shipped'                            Plan requires a date range on ShippedDate: 2013-01-01 to 2013-12-31.; verification=mismatch
+  DETECTED neg-n2  LIMIT 5 instead of 3                                     Plan requires LIMIT 3, SQL has LIMIT 5.
+  DETECTED neg-n3  year filter dropped                                      The question mentions 2013 but the SQL has no filter on that year.
+  missed   neg-n4  inverted condition                                      (hard) 
+  DETECTED neg-h1  COUNT of sales instead of revenue SUM                    The question ranks by 'revenue', an amount, but the SQL only counts rows.
+  DETECTED neg-h2  year filter dropped                                      The question mentions 2012 but the SQL has no filter on that year.
+  DETECTED neg-h3  value spelled differently from the data                  Filter on Country uses 'germany'; the stored value is 'Germany'.; The value 'germany' does not exist in customers.Country. Stored value(s) closest to it: 'Germa
+  DETECTED neg-h4  ascending instead of descending                          Plan requires ORDER BY DESC.; The question asks for the highest values but ORDER BY is ascending.

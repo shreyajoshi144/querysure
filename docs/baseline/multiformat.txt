@@ -1,0 +1,35 @@
+QuerySure multi-format evaluation (deterministic pipeline; candidate SQL supplied, no LLM called)
+set: tuned
+data: $QUERYSURE_EVAL_DATA  skipped datasets: none
+
+cases (incl. variants): 180
+exact-result correct:   100.0%
+semantically correct:   100.0%  (extra columns / 2-decimal rounding tolerated)
+accepted by validator:  100.0%
+clean (no false alarm): 100.0%   false alarms on correct results: 0.0%
+verified_match: 7   verification mismatch: 0
+retrieval recall (all needed tables shown to the model): 100.0%
+declined (no SQL): 0   estimated LLM cost: $0.0
+
+by dataset:
+  csv_financial      n= 37 correct=100.0% semantic=100.0% clean=100.0% rejected=0 retrieval_recall=100.0%
+  xlsx_projects      n= 39 correct=100.0% semantic=100.0% clean=100.0% rejected=0 retrieval_recall=100.0%
+  json_countries     n= 41 correct=100.0% semantic=100.0% clean=100.0% rejected=0 retrieval_recall=100.0%
+  sqlite_northwind   n= 34 correct=100.0% semantic=100.0% clean=100.0% rejected=0 retrieval_recall=100.0%
+  db_chinook         n= 29 correct=100.0% semantic=100.0% clean=100.0% rejected=0 retrieval_recall=100.0%
+by language/variant:
+  de           n= 22 correct=100.0% semantic=100.0% clean=100.0%
+  en           n= 73 correct=100.0% semantic=100.0% clean=100.0%
+  es           n= 29 correct=100.0% semantic=100.0% clean=100.0%
+  fr           n= 21 correct=100.0% semantic=100.0% clean=100.0%
+  hi           n= 11 correct=100.0% semantic=100.0% clean=100.0%
+  incomplete   n=  3 correct=100.0% semantic=100.0% clean=100.0%
+  informal     n= 14 correct=100.0% semantic=100.0% clean=100.0%
+  typo         n=  7 correct=100.0% semantic=100.0% clean=100.0%
+ingestion fidelity:
+  csv_financial      rows_match=True columns_exact=14/14 text_stored_as_number=['Period']
+  xlsx_projects      rows_match=True columns_exact=7/7
+  json_countries     rows_match=True columns_exact=7/7
+  sqlite_northwind   rows_match=True columns_exact=None/None
+  db_chinook         rows_match=True columns_exact=None/None
+mf exit 0

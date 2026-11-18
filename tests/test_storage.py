@@ -365,8 +365,10 @@ def test_every_upload_format_is_persisted_to_object_storage(client, s3_env, kind
     sid = r.json()["session_id"]
 
     row = _session_row(sid)
-    assert row.db_path.startswith(f"s3://{BUCKET}/datasets/{row.user_id}/")
-    assert _keys() == [row.db_path.split(f"s3://{BUCKET}/")[1]]
+    # Sprint 3: workspace-owned layout; the curated database and the retained raw upload are two objects of one dataset.
+    assert row.db_path.startswith(f"s3://{BUCKET}/datasets/ws/")
+    assert row.db_path.split(f"s3://{BUCKET}/")[1] in _keys() and len(_keys()) == 2
+    assert sum("/raw/" in k for k in _keys()) == 1
     assert _leftovers(s3_env) == [], "no raw/temporary upload should be left on local disk"
 
     ex = _execute(client, headers, sid)
@@ -386,7 +388,7 @@ def test_dataset_survives_restart_that_wipes_local_disk(client, s3_env):
     assert r.json()["rows"] == before
 
 
-def test_reupload_deletes_the_superseded_dataset(client, s3_env):
+def test_reupload_keeps_the_previous_workspace_dataset(client, s3_env):
     headers = _register(client)
     sid = _upload(client, headers, "csv").json()["session_id"]
     first_key = _keys()[0]
@@ -394,21 +396,22 @@ def test_reupload_deletes_the_superseded_dataset(client, s3_env):
     r = _upload(client, headers, "json", session_id=sid)
     assert r.status_code == 200 and r.json()["session_id"] == sid
     keys = _keys()
-    assert len(keys) == 1 and keys[0] != first_key, "old object must be removed, new one kept"
+    # Sprint 3 (decision 2): replacing a session's dataset only unlinks the old one; it stays until DELETE /api/datasets/{id}.
+    assert len(keys) == 4 and first_key in keys, "the previous dataset must be kept"
     assert _execute(client, headers, sid).status_code == 200
 
 
-def test_switching_to_sample_db_releases_previous_upload_and_spares_the_sample(client, s3_env, tmp_path, monkeypatch):
+def test_switching_to_sample_db_unlinks_previous_upload_and_spares_the_sample(client, s3_env, tmp_path, monkeypatch):
     sample = _make_sqlite(str(tmp_path), "retail_sample.db")
     monkeypatch.setattr(api_module, "SAMPLE_DB", sample)
 
     headers = _register(client)
     sid = _upload(client, headers, "csv").json()["session_id"]
-    assert len(_keys()) == 1
+    assert len(_keys()) == 2
 
     r = client.post("/api/connect/sample", headers=headers, json={"session_id": sid})
     assert r.status_code == 200, r.text
-    assert _keys() == [], "the replaced upload must be deleted"
+    assert len(_keys()) == 2, "a workspace dataset is not deleted by unlinking it from a session"
     assert os.path.exists(sample), "the bundled sample database must never be deleted"
     assert _session_row(sid).db_path == sample
 
@@ -487,9 +490,24 @@ def test_tampered_session_cannot_read_another_users_dataset(client, s3_env):
     alice_ref = _session_row(alice_sid).db_path
 
     bob_sid = _upload(client, bob, "json").json()["session_id"]
+    own = _execute(client, bob, bob_sid).json()["rows"]
     _set_db_path(bob_sid, alice_ref)  # e.g. a corrupted/forged row
     r = _execute(client, bob, bob_sid)
-    assert r.status_code == 410, "bob must not be served alice's object"
+    # A workspace dataset is resolved through the catalog (dataset_id), never through the session's db_path, so the forged
+    # path is ignored: bob is served his own data and never alice's object.
+    assert r.status_code == 200 and r.json()["rows"] == own, "bob must not be served alice's object"
+
+
+def test_forged_legacy_session_cannot_read_a_workspace_dataset(client, s3_env):
+    """A session row without a catalog link whose db_path names a workspace object is refused (410), not served."""
+    alice, bob = _register(client), _register(client)
+    alice_ref = _session_row(_upload(client, alice, "csv").json()["session_id"]).db_path
+    bob_sid = _upload(client, bob, "json").json()["session_id"]
+    with SessionLocal() as db:
+        row = db.get(PipelineSession, bob_sid)
+        row.dataset_id, row.db_path = None, alice_ref
+        db.commit()
+    assert _execute(client, bob, bob_sid).status_code == 410
 
 
 # ======================================================== HTTP: local fallback
@@ -503,15 +521,15 @@ def test_local_fallback_upload_and_query_unchanged(client, local_env, kind):
 
     path = _session_row(sid).db_path
     assert not path.startswith("s3://")
-    assert os.path.dirname(path) == local_env and os.path.exists(path)
-    assert _leftovers(local_env) == [os.path.basename(path)]
+    assert path.startswith(os.path.join(local_env, "ws") + os.sep) and os.path.exists(path)   # Sprint 3 workspace layout
+    assert _leftovers(local_env) == ["ws"]
 
     ex = _execute(client, headers, sid)
     assert ex.status_code == 200, ex.text
     assert {x["region"] for x in ex.json()["rows"]} == {"North", "South", "East"}
 
 
-def test_local_reupload_deletes_superseded_file(client, local_env):
+def test_local_reupload_keeps_the_previous_workspace_file(client, local_env):
     headers = _register(client)
     sid = _upload(client, headers, "csv").json()["session_id"]
     first = _session_row(sid).db_path
@@ -519,8 +537,8 @@ def test_local_reupload_deletes_superseded_file(client, local_env):
     _upload(client, headers, "json", session_id=sid)
     second = _session_row(sid).db_path
     assert first != second
-    assert not os.path.exists(first), "superseded upload must be removed (was orphaned before)"
-    assert _leftovers(local_env) == [os.path.basename(second)]
+    assert os.path.exists(first) and os.path.exists(second), "a workspace dataset outlives its session link (Sprint 3)"
+    assert _leftovers(local_env) == ["ws"]
 
 
 def test_local_missing_file_returns_410_instead_of_raw_500(client, local_env):

@@ -1,0 +1,293 @@
+{
+ "retrieval": {
+  "suite": "retrieval",
+  "chunk_chars": 900,
+  "min_score": 0.08,
+  "top_k_default": 6,
+  "classes": {
+   "keyword": {
+    "n": 24,
+    "recall@1": 1.0,
+    "recall@3": 1.0,
+    "recall@6": 1.0,
+    "mrr": 1.0
+   },
+   "paraphrase": {
+    "n": 60,
+    "recall@1": 0.55,
+    "recall@3": 0.717,
+    "recall@6": 0.75,
+    "mrr": 0.632
+   },
+   "offtopic": {
+    "n": 16,
+    "false_positive_rate": 0.125
+   }
+  },
+  "misses": [
+   {
+    "class": "paraphrase",
+    "question": "Can I get my money back if I changed my mind about something I bought?",
+    "gold": "product_returns.md",
+    "rank": null,
+    "top": [
+     [
+      "support_sla.md",
+      0.1141
+     ],
+     [
+      "support_sla.md",
+      0.0895
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "What should I do if someone steals my work laptop?",
+    "gold": "it_security.md",
+    "rank": null,
+    "top": [
+     [
+      "it_security.md",
+      0.2111
+     ],
+     [
+      "support_sla.md",
+      0.1141
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "How quickly will someone respond if the whole system goes down?",
+    "gold": "support_sla.md",
+    "rank": null,
+    "top": [
+     [
+      "support_sla.md",
+      0.0972
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "Can I plug in a thumb drive?",
+    "gold": "it_security.md",
+    "rank": null,
+    "top": []
+   },
+   {
+    "class": "paraphrase",
+    "question": "How many days off do I get when a relative dies?",
+    "gold": "leave_policy.md",
+    "rank": null,
+    "top": [
+     [
+      "support_sla.md",
+      0.1354
+     ],
+     [
+      "onboarding.md",
+      0.1023
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "What must I do if I put a private purchase on the company plastic?",
+    "gold": "expenses_policy.md",
+    "rank": 5,
+    "top": [
+     [
+      "procurement.md",
+      0.153
+     ],
+     [
+      "it_security.md",
+      0.1339
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "When do I need a doctor's note for being ill?",
+    "gold": "leave_policy.md",
+    "rank": 4,
+    "top": [
+     [
+      "expenses_policy.md",
+      0.1083
+     ],
+     [
+      "expenses_policy.md",
+      0.1032
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "Who must approve a period without pay?",
+    "gold": "leave_policy.md",
+    "rank": null,
+    "top": [
+     [
+      "leave_policy.md",
+      0.096
+     ],
+     [
+      "product_returns.md",
+      0.0888
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "Is it fine to tell a coworker my login?",
+    "gold": "it_security.md",
+    "rank": null,
+    "top": []
+   },
+   {
+    "class": "paraphrase",
+    "question": "Is it safe to work from a cafe?",
+    "gold": "it_security.md",
+    "rank": null,
+    "top": []
+   },
+   {
+    "class": "paraphrase",
+    "question": "Is there somebody assigned to help me settle in?",
+    "gold": "onboarding.md",
+    "rank": null,
+    "top": []
+   },
+   {
+    "class": "paraphrase",
+    "question": "How soon do you reply to a medium-priority ticket?",
+    "gold": "support_sla.md",
+    "rank": null,
+    "top": [
+     [
+      "onboarding.md",
+      0.1514
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "Where do I find out about scheduled downtime?",
+    "gold": "support_sla.md",
+    "rank": null,
+    "top": [
+     [
+      "onboarding.md",
+      0.1785
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "For how many days are copies of the database stored?",
+    "gold": "data_retention.md",
+    "rank": null,
+    "top": [
+     [
+      "onboarding.md",
+      0.2878
+     ],
+     [
+      "leave_policy.md",
+      0.1486
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "Who can sign supplier agreements?",
+    "gold": "procurement.md",
+    "rank": null,
+    "top": []
+   },
+   {
+    "class": "paraphrase",
+    "question": "Where can I see approved suppliers?",
+    "gold": "procurement.md",
+    "rank": null,
+    "top": [
+     [
+      "leave_policy.md",
+      0.1303
+     ]
+    ]
+   },
+   {
+    "class": "paraphrase",
+    "question": "How many days do we have to pay suppliers?",
+    "gold": "procurement.md",
+    "rank": null,
+    "top": [
+     [
+      "product_returns.md",
+      0.1696
+     ],
+     [
+      "leave_policy.md",
+      0.1613
+     ]
+    ]
+   }
+  ],
+  "decision": {
+   "keyword_recall@3": 1.0,
+   "paraphrase_recall@3": 0.717,
+   "offtopic_false_positive_rate": 0.125,
+   "thresholds": {
+    "keyword_recall_at_3_min": 0.9,
+    "paraphrase_recall_at_3_min": 0.6,
+    "offtopic_false_positive_max": 0.25
+   },
+   "recall@3_95pct_interval": {
+    "keyword": [
+     0.862,
+     1.0
+    ],
+    "paraphrase": [
+     0.592,
+     0.815
+    ]
+   },
+   "vector_index": "not_justified",
+   "rule": "justified = a recall interval lies wholly below its threshold (or off-topic false positives exceed the cap); inconclusive = point estimate below the threshold but the interval still contains it; else not_justified"
+  }
+ },
+ "agent_plans": {
+  "suite": "agent_plans",
+  "mode": "oracle",
+  "goals": 14,
+  "attempted": 14,
+  "provider_errors": 0,
+  "providers": [],
+  "valid_plan_rate": 1.0,
+  "exact_tool_set_rate": 1.0,
+  "tool_precision": 1.0,
+  "tool_recall": 1.0,
+  "id_argument_accuracy": 1.0,
+  "write_overreach_rate": 0.0,
+  "failures": []
+ },
+ "safety": {
+  "suite": "safety",
+  "cases": 36,
+  "blocked": 36,
+  "block_rate": 1.0,
+  "by_category": {
+   "plan_validation": "14/14",
+   "approval_gate": "5/5",
+   "prompt_fence": "4/4",
+   "answer_validation": "4/4",
+   "sql_identifiers": "5/5",
+   "isolation": "4/4"
+  },
+  "failures": []
+ }
+}

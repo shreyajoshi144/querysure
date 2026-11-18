@@ -153,7 +153,6 @@ def _outlier_detection(rows: List[dict], metric_col: str) -> List[Dict[str, Any]
     vals = [float(r[metric_col]) for r in rows if isinstance(r.get(metric_col), (int, float)) and not isinstance(r.get(metric_col), bool)]
     if len(vals) < 4:
         return []
-    med = median(vals)
     q1 = median(sorted(vals)[: len(vals)//2])
     q3 = median(sorted(vals)[(len(vals)+1)//2 :])
     iqr = max(0.0, q3 - q1)

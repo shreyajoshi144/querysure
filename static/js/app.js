@@ -323,6 +323,7 @@ function showAuthGate(message) {
 
 function hideAuthGate() {
   switchScreen('screen-workspace');
+  if ($('view-workspace').classList.contains('active')) { setWsPage('home'); loadWorkspaceView(); }
 }
 
 // FIX: "Flush Session" previously created a brand-new (empty) backend
@@ -385,15 +386,14 @@ function showQuotaBanner(q) {
 // row and leave the UI showing a mix of both. Locks the competing controls
 // for the duration of runAll().
 // ---- Views: Ask, Datasets, Evaluation
-function switchView(name) {
+function switchView(name, page) {
+  if (name === 'datasets') { name = 'workspace'; page = 'explore'; }   // the schema explorer lives on the Explore page
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + name));
-  document.querySelectorAll('.nav-tab[data-view]').forEach(b => {
-    const on = b.dataset.view === name;
-    b.classList.toggle('active', on);
-    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
-  });
+  if (name === 'workspace' && typeof setWsPage === 'function') setWsPage(page || wsPageNow);
+  if (typeof markActiveTab === 'function') markActiveTab(name);
   if (name === 'evaluation') loadWorkspaceEvaluation(false);
   if (name === 'history') loadHistory(false);
+  if (name === 'workspace') loadWorkspaceView();
   window.scrollTo({top: 0, behavior: 'auto'});
 }
 
@@ -619,8 +619,15 @@ function resetWorkspaceUI() {
 }
 
 // Locks the competing controls while a run is in flight, so two requests never interleave on one session row.
+function setWorkflowOpen(open) {
+  $('runProgress').classList.toggle('is-collapsed', !open);
+  $('wfToggle').setAttribute('aria-expanded', String(open));
+  $('wfToggle').textContent = open ? 'Hide stages' : 'Show stages';
+}
 function setPipelineBusy(busy) {
   pipelineIsBusy = !!busy; refreshStages();
+  // While a question runs the stages are the point; once the answer is in, the result comes first and the stages fold away.
+  if ($('wfToggle')) setWorkflowOpen(busy || $('answerSheet').classList.contains('hidden-element'));
   ['analyzeBtn', 'sampleBtn', 'fileInput', 'newSessionBtn', 'emptySampleBtn', 'dsSampleBtn'].forEach(id => { const el = $(id); if (el) el.disabled = busy; });
 }
 
@@ -756,6 +763,7 @@ async function bootApp() {
   if (me && me.email) setCurrentUser(me, await apiGet('/api/auth/methods'));
   refreshSettingsView();
   resetWorkspaceUI();
+  loadWorkspaces();
   await newSession();
   refreshUsage();
   refreshAccountUsage();
@@ -1638,6 +1646,27 @@ function fmtVal(v, depth = 0) {
   }
   const s = JSON.stringify(redactForDisplay(v)); return s.length > 300 ? s.slice(0, 297) + '…' : s;
 }
+// Sprint 2: every provider attempt behind this answer (fallbacks, JSON retries, repairs), from GET /api/ai/traces/{id}.
+function aiTraceSection(d) {
+  const t = d && d.ai_trace;
+  if (!t || !Array.isArray(t.calls)) return d && d.trace_id ? inspSection('Model calls', '<p class="insp-muted">Loading the call trace…</p>') : '';
+  const s = t.summary || {};
+  const lines = t.calls.map(c => `${c.task_type === 'sql_repair' ? 'Repair' : 'Generate'} · ${c.provider}:${c.model || '?'} · ${c.outcome}` +
+    `${c.error_category ? ' (' + c.error_category + ')' : ''}${c.retry_index ? ' · retry ' + c.retry_index : ''}` +
+    `${typeof c.latency_ms === 'number' ? ' · ' + fmtMs(c.latency_ms) : ''}` +
+    `${c.outcome === 'success' && c.input_tokens != null ? ' · ' + fmtInt((c.input_tokens || 0) + (c.output_tokens || 0)) + ' tokens' + (c.usage_estimated ? ' (estimated)' : '') : ''}`);
+  return inspSection(`Model calls (${t.calls.length})`, inspFacts([['Trace ID', t.trace_id], ['Succeeded', s.succeeded], ['Failed', s.failed], ['Skipped', s.skipped],
+    ['Estimated cost', typeof s.estimated_cost_cents === 'number' ? '$' + (s.estimated_cost_cents / 100).toFixed(4) : null]]) + inspList(lines));
+}
+
+async function loadAiTrace(res) {
+  if (!res || !res.trace_id) return;
+  const t = await apiGet('/api/ai/traces/' + encodeURIComponent(res.trace_id));
+  if (!t || !t.success) return;
+  res.ai_trace = t;
+  if (selectedStage === 'sql') renderStageDetail();
+}
+
 function inspFacts(rows) {
   const keep = rows.filter(r => r && r[1] !== undefined && r[1] !== null && r[1] !== '');
   if (!keep.length) return '';
@@ -1716,7 +1745,8 @@ const NODE_BODY = {
     const d = sd('sql'); if (!d) return '';
     return inspSection('Input', inspFacts([['Question', runQuestion ? runQuestion.text : null], ['Plan available', !!d.plan]])) +
       inspSection('Generated SQL', inspCode(d.sql)) +
-      inspSection('Details', inspFacts([['Explanation', d.explanation], ['Confidence', d.confidence], ['Complexity', d.complexity], ['Tables used', d.tables_used], ['Model', d.provider_used]]));
+      inspSection('Details', inspFacts([['Explanation', d.explanation], ['Confidence', d.confidence], ['Complexity', d.complexity], ['Tables used', d.tables_used], ['Model', d.provider_used]])) +
+      aiTraceSection(d);
   },
   validation() {
     const d = sd('validation'); if (!d) return '';
@@ -2326,7 +2356,7 @@ function download(name, text, type='text/plain') {
 }
 
 // View navigation (rail), answer-sheet index and result chart/table toggle
-document.querySelectorAll('.nav-tab[data-view]').forEach(b => { b.onclick = () => switchView(b.dataset.view); });
+document.querySelectorAll('.nav-tab[data-view]').forEach(b => { b.onclick = () => switchView(b.dataset.view, b.dataset.wsPage); });
 document.querySelectorAll('.sheet-index button').forEach(b => {
   b.onclick = () => {
     document.querySelectorAll('.sheet-index button').forEach(x => x.classList.remove('current'));
@@ -2448,19 +2478,20 @@ async function connectSampleInner(opts = {}) {
   stageDone('connect', res); setPipelineState('Connected');
 }
 
-async function uploadFile(file) {
+async function uploadFile(file, opts) {
   // Ask is locked while an upload is in flight, so no answer for the previous dataset can land after the switch.
-  if (pipelineIsBusy) return;
+  if (pipelineIsBusy) return false;
   setPipelineBusy(true);
-  try { await uploadFileInner(file); } finally { setPipelineBusy(false); }
+  try { return await uploadFileInner(file, opts); } finally { setPipelineBusy(false); }
 }
 
-async function uploadFileInner(file) {
+async function uploadFileInner(file, opts) {
   markStep('connect','active'); $('runProgress').hidden = false; setPipelineState('Uploading your file…');
   clearGlobalError();
   const fd = new FormData(); fd.append('file', file); fd.append('session_id', sessionId);
-  if (!(await ensureSession())) return;
+  if (!(await ensureSession())) return false;
   fd.set('session_id', sessionId);
+  if (activeWorkspaceId && wsCan('analyst')) fd.set('workspace_id', activeWorkspaceId);   // a viewer's uploads stay personal
   const res = await postForm('/api/connect/upload', fd);
   if (!res.success) {
     markStep('connect','error');
@@ -2471,7 +2502,7 @@ async function uploadFileInner(file) {
     // actionable message, shown the same way as every other pipeline
     // error instead of a blocking native alert().
     showGlobalError(res.error || 'Upload failed.', res.request_id);
-    return;
+    return false;
   }
   sessionId = res.session_id; refreshSettingsView();
   setPipelineState('Upload queued…');
@@ -2488,7 +2519,8 @@ async function uploadFileInner(file) {
   setStatus('Connected · ' + (completed.db_name || 'Uploaded dataset'), true);
   renderSchemaList(completed.tables);
   stageDone('connect', completed); setPipelineState('Connected');
-  switchView('datasets');
+  if (!(opts && opts.stay)) switchView('datasets');
+  return true;
 }
 
 function throwApiError(res, fallbackMessage) {
@@ -2553,6 +2585,7 @@ async function runAll() {
       throw err;
     }
     refreshUsage();
+    loadAiTrace(sqlRes);   // not awaited: the trace only fills the Generate SQL inspector
     currentSql = sqlRes.sql || '';
     $('sqlOut').innerHTML = highlightSql(currentSql || '-- No SQL was generated.');
 
@@ -2843,6 +2876,945 @@ $('downloadJsonBtn').onclick = () => download('querysure-result.json', JSON.stri
 // path as post-login boot (bootApp) once the token is confirmed valid, and
 // explicitly falls back to the landing screen (not a stuck blank state) if
 // the token is missing or invalid.
+// ---- Workspaces (Sprint 1): switcher, dataset catalog, members, audit trail ----
+// Everything shown here comes from /api/workspaces*; the role checks are enforced server-side, the UI only hides
+// controls the caller's role cannot use. Rendering uses textContent only (no HTML from data).
+let workspaceList = [];
+let activeWorkspaceId = '';
+let wsAuditCursor = null;
+const WS_ROLE_RANK = { viewer: 10, analyst: 20, admin: 30, owner: 40 };
+const WS_ACTION_LABELS = {
+  'auth.login': 'Signed in', 'dataset.upload': 'Uploaded dataset', 'dataset.delete': 'Deleted dataset',
+  'query.run': 'Ran a query', 'report.create': 'Generated a report', 'workspace.create': 'Created workspace',
+  'workspace.rename': 'Renamed workspace', 'workspace.delete': 'Deleted workspace', 'member.add': 'Added member',
+  'member.role_change': 'Changed member role', 'member.remove': 'Removed member', 'member.leave': 'Left workspace',
+};
+
+function wsStorageKey() { return 'qs_ws_' + (currentUser && currentUser.id ? currentUser.id : ''); }
+function activeWorkspace() { return workspaceList.find(w => w.id === activeWorkspaceId) || null; }
+function wsCan(role) { const w = activeWorkspace(); return !!w && (WS_ROLE_RANK[w.role] || 0) >= WS_ROLE_RANK[role]; }
+
+function wsEl(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined && text !== null) el.textContent = String(text);
+  return el;
+}
+
+function setWsMessage(text, isError) {
+  const el = $('wsMessage');
+  el.textContent = text || '';
+  el.classList.toggle('is-error', !!isError);
+}
+
+function wsBytes(n) {
+  if (typeof n !== 'number') return '—';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function wsWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
+}
+
+async function loadWorkspaces() {
+  const res = await apiGet('/api/workspaces');
+  if (!res || !res.success) return false;
+  workspaceList = res.workspaces || [];
+  let saved = '';
+  try { saved = localStorage.getItem(wsStorageKey()) || ''; } catch (_) {}
+  const pick = [saved, activeWorkspaceId, res.personal_workspace_id].find(id => id && workspaceList.some(w => w.id === id));
+  activeWorkspaceId = pick || (workspaceList[0] && workspaceList[0].id) || '';
+  renderWorkspaceSwitcher();
+  return true;
+}
+
+function setActiveWorkspace(id) {
+  activeWorkspaceId = id;
+  try { localStorage.setItem(wsStorageKey(), id); } catch (_) {}
+  wsAuditCursor = null;
+  renderWorkspaceSwitcher();
+}
+
+function renderWorkspaceSwitcher() {
+  const sel = $('wsSelect');
+  sel.replaceChildren();
+  workspaceList.forEach(w => {
+    const label = w.kind === 'personal' ? `${w.name} (personal)` : `${w.name} · ${w.role}`;
+    const opt = wsEl('option', '', label);
+    opt.value = w.id;
+    sel.appendChild(opt);
+  });
+  sel.value = activeWorkspaceId;
+  const w = activeWorkspace();
+  const hint = $('uploadWorkspaceHint');
+  if (!w) { hint.textContent = ''; return; }
+  if (w.kind === 'personal') hint.textContent = 'Uploads are catalogued in your personal workspace.';
+  else if ((WS_ROLE_RANK[w.role] || 0) >= WS_ROLE_RANK.analyst) hint.textContent = `Uploads are catalogued in “${w.name}”.`;
+  else hint.textContent = `You are a viewer in “${w.name}”; uploads go to your personal workspace.`;
+}
+
+async function loadWorkspaceView() {
+  setWsMessage('');
+  if (!(await loadWorkspaces())) { setWsMessage('Could not load workspaces. Try again.', true); return; }
+  const w = activeWorkspace();
+  if (!w) return;
+  $('wsTitle').textContent = w.name;
+  $('wsSubtitle').textContent = w.kind === 'personal'
+    ? 'Your personal workspace: only you can see it.'
+    : `Team workspace · ${w.member_count} member${w.member_count === 1 ? '' : 's'} · you are ${w.role}.`;
+  $('wsYourRole').textContent = w.role;
+  $('wsPersonalNote').hidden = w.kind !== 'personal';
+  $('wsInviteForm').hidden = !(w.kind === 'team' && wsCan('admin'));
+  $('wsInviteRole').querySelector('option[value="admin"]').hidden = w.role !== 'owner';
+  $('wsRenameForm').hidden = !wsCan('admin');
+  $('wsRenameName').value = w.name;
+  $('wsDeleteBtn').hidden = !(w.kind === 'team' && w.role === 'owner');
+  $('wsLeaveBtn').hidden = !(w.kind === 'team' && w.role !== 'owner');
+  $('wsAuditCard').hidden = !wsCan('admin');
+  $('wsKbUploadRow').hidden = !wsCan('analyst');
+  $('wsUploadRow').hidden = !wsCan('analyst');
+  $('wsKbAnswer').replaceChildren();
+  await Promise.all([loadWsSources(), loadWsDatasets(), loadWsMembers(), loadWsConnections(), loadWsKnowledge(), loadWsChats(true), loadWsAgent(), loadWsInvestigations(), loadWsUsage(), loadWsOverview(), wsCan('admin') ? loadWsAudit(false) : Promise.resolve()]);
+  setWsPage($('wsGrid').dataset.page);
+}
+
+$('wfToggle').onclick = () => setWorkflowOpen($('runProgress').classList.contains('is-collapsed'));
+
+async function loadWsSources() {
+  const w = activeWorkspace(), box = $('wsSources');
+  if (!w) return;
+  const [ds, conns] = await Promise.all([apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/datasets`), apiGet(`/api/connections?workspace_id=${encodeURIComponent(w.id)}`)]);
+  const items = [];
+  if (dbConnected && currentDataset) items.push([currentDataset.name, 'Open in this session · used by Query and Explore']);
+  if (ds && ds.success) ds.datasets.forEach(d => items.push([d.name, `Dataset · ${d.status}${d.quality_status ? ' · quality ' + d.quality_status : ''}`]));
+  if (conns && conns.success) (conns.connections || []).forEach(c => items.push([c.name, `${c.connector} connection · ${c.status}${c.last_test_ok === false ? ' · last test failed' : ''}`]));
+  const ul = wsEl('ul', 'ws-list');
+  ul.replaceChildren(...(items.length ? items.map(([t, m]) => { const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main'); main.append(wsEl('span', 'ws-item-title', t), wsEl('span', 'ws-item-meta', m)); li.appendChild(main); return li; })
+    : [wsEl('li', 'ws-empty', 'Nothing connected yet. Start in Connect.')]));
+  box.replaceChildren(ul);
+}
+
+async function loadWsKnowledge() {
+  const w = activeWorkspace(), box = $('wsKbDocs');
+  box.replaceChildren();
+  const res = w ? await apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/knowledge`) : null;
+  if (!res || !res.success) { box.appendChild(wsEl('li', 'ws-empty', (res && res.error) || 'Could not load documents.')); return; }
+  if (!res.documents.length) box.appendChild(wsEl('li', 'ws-empty', 'No documents yet.'));
+  res.documents.forEach(d => {
+    const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main');
+    main.appendChild(wsEl('span', 'ws-item-title', d.name));
+    main.appendChild(wsEl('span', 'ws-item-meta', `${d.file_format.toUpperCase()} · ${fmtInt(d.chunk_count)} passages${d.page_count ? ' · ' + d.page_count + ' pages' : ''} · ${wsBytes(d.bytes)} · ${wsWhen(d.created_at)}`));
+    li.appendChild(main);
+    if (d.can_delete) {
+      const actions = wsEl('div', 'ws-item-actions'), b = wsEl('button', 'settings-copy-btn settings-danger', 'Delete');
+      b.type = 'button';
+      b.onclick = async () => {
+        if (!confirm(`Delete “${d.name}”? Its passages stop being searchable and citable.`)) return;
+        const r = await wsMutate('DELETE', `/api/knowledge/${encodeURIComponent(d.id)}`);
+        setWsMessage(r && r.success ? 'Document deleted.' : ((r && r.error) || 'The document could not be deleted.'), !(r && r.success));
+        loadWsKnowledge(); $('wsKbAnswer').replaceChildren();
+      };
+      actions.appendChild(b); li.appendChild(actions);
+    }
+    box.appendChild(li);
+  });
+}
+function renderKbSources(box, sources) {
+  const ul = wsEl('ul', 'ws-list');
+  sources.forEach(s => {
+    const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main');
+    main.appendChild(wsEl('span', 'ws-item-title', `[${s.n}] ${s.document_name}${s.page ? ' · page ' + s.page : ''}${s.heading ? ' · ' + s.heading : ''}${s.cited ? '' : ' (retrieved, not cited)'}`));
+    main.appendChild(wsEl('span', 'ws-item-meta', s.text.length > 400 ? s.text.slice(0, 400) + '…' : s.text));
+    li.appendChild(main); ul.appendChild(li);
+  });
+  box.appendChild(ul);
+}
+$('wsKbUploadBtn').onclick = () => $('wsKbFile').click();
+$('wsKbFile').onchange = async (e) => {
+  const input = e.target, file = input.files && input.files[0], w = activeWorkspace();
+  input.value = '';
+  if (!file || !w) return;
+  const fd = new FormData(); fd.append('file', file);
+  setWsMessage('Indexing…');
+  const res = await postForm(`/api/workspaces/${encodeURIComponent(w.id)}/knowledge`, fd);
+  setWsMessage(res && res.success ? `Indexed ${res.document.chunk_count} passages from ${file.name}.` : ((res && res.error) || 'The document could not be indexed.'), !(res && res.success));
+  loadWsKnowledge();
+};
+$('wsKbRefresh').onclick = () => loadWsKnowledge();
+$('wsKbAskForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const w = activeWorkspace(), box = $('wsKbAnswer'), q = $('wsKbQuestion').value.trim();
+  if (!w || !q) return;
+  box.replaceChildren(wsEl('p', 'ws-help', 'Searching the documents…'));
+  const res = await wsMutate('POST', `/api/workspaces/${encodeURIComponent(w.id)}/knowledge/ask`, { question: q, ...(apiKeyOverride ? { api_key: apiKeyOverride } : {}) });
+  box.replaceChildren();
+  if (!res || !res.success) { box.appendChild(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'The question could not be answered.')); return; }
+  if (!res.answer) { box.appendChild(wsEl('p', 'ws-help', res.note || 'The documents do not contain an answer to this question.')); }
+  else {
+    box.appendChild(wsEl('p', 'ws-item-title', res.answer));
+    if (res.insufficient) box.appendChild(wsEl('p', 'ws-help', 'The documents do not fully answer this.'));
+  }
+  if (res.sources && res.sources.length) renderKbSources(box, res.sources);
+};
+$('wsKbSearch').onclick = async () => {
+  const w = activeWorkspace(), box = $('wsKbAnswer'), q = $('wsKbQuestion').value.trim();
+  if (!w || !q) return;
+  box.replaceChildren();
+  const res = await apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/knowledge/search?q=${encodeURIComponent(q)}`);
+  if (!res || !res.success) { box.appendChild(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'Search failed.')); return; }
+  if (!res.results.length) { box.appendChild(wsEl('p', 'ws-help', 'No relevant passage found.')); return; }
+  renderKbSources(box, res.results.map((r, i) => ({ ...r, n: i + 1, cited: true })));
+};
+
+let wsChatId = null;
+function renderChatMessage(m) {
+  const box = wsEl('div', 'ws-chat-msg ' + (m.role === 'user' ? 'ws-chat-user' : 'ws-chat-bot'));
+  box.appendChild(wsEl('div', '', m.content));
+  if (m.role !== 'user' && m.sources && m.sources.length) renderKbSources(box, m.sources.filter(s => s.cited));
+  return box;
+}
+async function openChat(id) {
+  wsChatId = id; const log = $('wsChatLog'); log.replaceChildren();
+  if (!id) return;
+  const res = await apiGet(`/api/conversations/${encodeURIComponent(id)}`);
+  if (wsChatId !== id) return;      // another chat was opened meanwhile
+  if (!res || !res.success) { log.replaceChildren(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'Could not load the conversation.')); return; }
+  log.replaceChildren(...res.messages.map(renderChatMessage));      // replace, never append: concurrent loads must not duplicate turns
+  log.scrollTop = log.scrollHeight;
+}
+async function loadWsChats(selectFirst) {
+  const w = activeWorkspace(), box = $('wsChatList');
+  box.replaceChildren();
+  const res = w ? await apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/conversations`) : null;
+  if (!res || !res.success) { box.appendChild(wsEl('li', 'ws-empty', (res && res.error) || 'Could not load conversations.')); return; }
+  if (selectFirst) { wsChatId = res.conversations.length ? res.conversations[0].id : null; openChat(wsChatId); }
+  if (!res.conversations.length) box.appendChild(wsEl('li', 'ws-empty', 'No conversations yet.'));
+  res.conversations.forEach(c => {
+    const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main');
+    const open = wsEl('button', 'btn-quiet', c.id === wsChatId ? '● ' + c.title : c.title);
+    open.type = 'button'; open.onclick = () => { openChat(c.id); loadWsChats(false); };
+    main.appendChild(open); main.appendChild(wsEl('span', 'ws-item-meta', `${c.message_count} messages · ${wsWhen(c.updated_at)}`));
+    li.appendChild(main);
+    const actions = wsEl('div', 'ws-item-actions'), del = wsEl('button', 'settings-copy-btn settings-danger', 'Delete');
+    del.type = 'button';
+    del.onclick = async () => {
+      if (!confirm(`Delete the conversation “${c.title}”?`)) return;
+      const r = await wsMutate('DELETE', `/api/conversations/${encodeURIComponent(c.id)}`);
+      setWsMessage(r && r.success ? 'Conversation deleted.' : ((r && r.error) || 'The conversation could not be deleted.'), !(r && r.success));
+      if (wsChatId === c.id) { wsChatId = null; $('wsChatLog').replaceChildren(); }
+      loadWsChats(false);
+    };
+    actions.appendChild(del); li.appendChild(actions); box.appendChild(li);
+  });
+}
+$('wsChatNew').onclick = () => { wsChatId = null; $('wsChatLog').replaceChildren(); $('wsChatInput').focus(); loadWsChats(false); };
+$('wsChatForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const w = activeWorkspace(), q = $('wsChatInput').value.trim(), log = $('wsChatLog');
+  if (!w || !q) return;
+  $('wsChatSend').disabled = true;
+  try {
+    if (!wsChatId) {
+      const c = await wsMutate('POST', `/api/workspaces/${encodeURIComponent(w.id)}/conversations`, {});
+      if (!c || !c.success) { setWsMessage((c && c.error) || 'Could not start a conversation.', true); return; }
+      wsChatId = c.conversation.id;
+    }
+    log.appendChild(renderChatMessage({ role: 'user', content: q }));
+    const pending = wsEl('div', 'ws-chat-msg ws-chat-bot', 'Thinking…'); log.appendChild(pending);
+    const res = await wsMutate('POST', `/api/conversations/${encodeURIComponent(wsChatId)}/messages`, { question: q, ...(apiKeyOverride ? { api_key: apiKeyOverride } : {}) });
+    pending.remove();
+    if (!res || !res.success) { log.appendChild(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'The message could not be answered.')); return; }
+    $('wsChatInput').value = '';
+    log.appendChild(renderChatMessage(res.message)); log.scrollTop = log.scrollHeight;
+    loadWsChats(false);
+  } finally { $('wsChatSend').disabled = false; $('wsChatInput').focus(); }
+};
+
+let wsAgentRunId = null;
+function agentStepEl(run, s) {
+  const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main');
+  main.appendChild(wsEl('span', 'ws-item-title', `${s.ordinal}. ${s.tool} · ${s.status.replace('_', ' ')}${s.risk === 'write' ? ' · changes data' : ''}`));
+  main.appendChild(wsEl('span', 'ws-item-meta', `${JSON.stringify(s.args)}${s.why ? ' — ' + s.why : ''}`));
+  if (s.error) main.appendChild(wsEl('span', 'ws-item-meta ws-quality-error', s.error));
+  if (s.result) main.appendChild(wsEl('pre', 'ws-item-meta', JSON.stringify(s.result, null, 1).slice(0, 1500)));
+  li.appendChild(main);
+  if (s.status === 'awaiting_approval') {
+    const actions = wsEl('div', 'ws-item-actions');
+    [['Approve', 'approve'], ['Reject', 'reject']].forEach(([label, verb]) => {
+      const b = wsEl('button', 'settings-copy-btn' + (verb === 'reject' ? ' settings-danger' : ''), label);
+      b.type = 'button';
+      b.onclick = async () => {
+        if (verb === 'approve' && !confirm(`Approve ${s.tool} with ${JSON.stringify(s.args)}?`)) return;
+        const r = await wsMutate('POST', `/api/agent/runs/${encodeURIComponent(run.id)}/steps/${s.id}/${verb}`);
+        setWsMessage(r && r.success ? (verb === 'approve' ? 'Approved.' : 'Rejected.') : ((r && r.error) || 'The decision could not be saved.'), !(r && r.success));
+        openAgentRun(run.id); loadWsAgent();
+      };
+      actions.appendChild(b);
+    });
+    li.appendChild(actions);
+  }
+  return li;
+}
+async function openAgentRun(id) {
+  wsAgentRunId = id; const box = $('wsAgentDetail'); box.replaceChildren();
+  const res = id ? await apiGet(`/api/agent/runs/${encodeURIComponent(id)}`) : null;
+  if (!id || wsAgentRunId !== id) return;
+  if (!res || !res.success) { box.replaceChildren(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'Could not load the run.')); return; }
+  const run = res.run, ul = wsEl('ul', 'ws-list');
+  ul.replaceChildren(...run.steps.map(s => agentStepEl(run, s)));
+  box.replaceChildren(wsEl('p', 'ws-item-title', `${run.goal} — ${run.status.replace('_', ' ')}`), ...(run.message ? [wsEl('p', 'ws-help', run.message)] : []), ul);
+  if (run.status === 'awaiting_approval') {
+    const c = wsEl('button', 'btn-quiet', 'Cancel run'); c.type = 'button';
+    c.onclick = async () => { await wsMutate('POST', `/api/agent/runs/${encodeURIComponent(run.id)}/cancel`); openAgentRun(run.id); loadWsAgent(); };
+    box.appendChild(c);
+  }
+}
+async function loadWsAgent() {
+  const w = activeWorkspace(), card = $('wsAgentCard'), box = $('wsAgentRuns');
+  if (!w) return;
+  card.hidden = !wsCan('analyst');
+  if (card.hidden) return;
+  const res = await apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/agent/runs`);
+  if (!res || !res.success) { box.replaceChildren(wsEl('li', 'ws-empty', (res && res.error) || 'Could not load runs.')); return; }
+  box.replaceChildren(...(res.runs.length ? res.runs.map(r => {
+    const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main'), b = wsEl('button', 'btn-quiet', `${r.goal.slice(0, 70)} · ${r.status.replace('_', ' ')}`);
+    b.type = 'button'; b.onclick = () => openAgentRun(r.id);
+    main.appendChild(b); main.appendChild(wsEl('span', 'ws-item-meta', wsWhen(r.created_at))); li.appendChild(main); return li;
+  }) : [wsEl('li', 'ws-empty', 'No runs yet.')]));
+}
+$('wsAgentRefresh').onclick = () => { loadWsAgent(); if (wsAgentRunId) openAgentRun(wsAgentRunId); };
+$('wsAgentForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const w = activeWorkspace(), goal = $('wsAgentGoal').value.trim();
+  if (!w || !goal) return;
+  $('wsAgentRun').disabled = true; $('wsAgentDetail').replaceChildren(wsEl('p', 'ws-help', 'Planning…'));
+  try {
+    const res = await wsMutate('POST', `/api/workspaces/${encodeURIComponent(w.id)}/agent/runs`, { goal, ...(apiKeyOverride ? { api_key: apiKeyOverride } : {}) });
+    if (!res || !res.success) { $('wsAgentDetail').replaceChildren(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'The agent could not plan this goal.')); return; }
+    $('wsAgentGoal').value = '';
+    openAgentRun(res.run.id); loadWsAgent();
+  } finally { $('wsAgentRun').disabled = false; }
+};
+
+let wsInvOptions = {};
+function invFill(id, items, blank) {
+  const sel = $(id); sel.replaceChildren(...(blank ? [new Option(blank, '')] : []), ...items.map(v => new Option(v, v)));
+}
+function invColumns() {
+  const t = (wsInvOptions[$('wsInvDataset').value] || {}).tables || [], tbl = t.find(x => x.name === $('wsInvTable').value);
+  const by = k => tbl ? tbl.columns.filter(c => c.kind === k).map(c => c.name) : [];
+  invFill('wsInvMeasure', by('number'), '(measure)'); invFill('wsInvDate', by('date'), '(date column)');
+  invFill('wsInvDim', [...by('category'), ...by('text')], '(segment column)');
+}
+async function invDatasetChanged() {
+  const id = $('wsInvDataset').value;
+  if (!id) return;
+  if (!wsInvOptions[id]) { const r = await apiGet(`/api/datasets/${encodeURIComponent(id)}/investigation-options`); wsInvOptions[id] = r && r.success ? r : { tables: [] }; }
+  invFill('wsInvTable', wsInvOptions[id].tables.map(t => t.name)); invColumns();
+}
+$('wsInvDataset').onchange = invDatasetChanged; $('wsInvTable').onchange = invColumns;
+async function invDownload(id, fmt) {
+  const res = await fetch(`/api/reports/${encodeURIComponent(id)}/download`, { headers: authHeaders() });
+  if (!res.ok) { setWsMessage('The export could not be downloaded.', true); return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await res.blob()); a.download = `investigation.${fmt}`; a.click();
+}
+// One result table of an analysis: a chart (line for periods, bar for categories) when the second column is numeric,
+// then the rows themselves. Reuses the Query page's SVG chart builders, so both pages chart the same way.
+function invTableBlock(t) {
+  const d = wsEl('div', 'inv-block');
+  d.appendChild(wsEl('p', 'inv-block-title', t.name));
+  const num = t.rows.length >= 2 && t.rows.every(x => typeof x[1] === 'number');
+  if (num) {
+    const data = t.rows.slice(0, 30).map(x => ({ label: String(x[0]), value: x[1] }));
+    const isPeriod = data.every(p => /^\d{4}(-\d{2}){0,2}$/.test(p.label));
+    const box = wsEl('div', 'chart-container-box inv-chart');
+    // Parsed as SVG/XML (no HTML parsing, no scripts) from numbers and escaped labels only.
+    const svg = new DOMParser().parseFromString((isPeriod ? buildLineSVG(data) : buildBarSVG(data)).replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" '), 'image/svg+xml').documentElement;
+    if (svg && svg.nodeName === 'svg') box.appendChild(document.importNode(svg, true));
+    d.appendChild(box);
+    d.appendChild(wsEl('p', 'ws-item-meta', `${isPeriod ? 'Line' : 'Bar'} chart of “${t.columns[1]}” by “${t.columns[0]}”.`));
+  }
+  const wrap = wsEl('div', 'table-wrapper'), table = wsEl('table', 'premium-table'), thead = wsEl('thead'), tbody = wsEl('tbody'), hr = wsEl('tr');
+  t.columns.forEach(c => hr.appendChild(wsEl('th', '', c))); thead.appendChild(hr);
+  t.rows.forEach(row => { const tr = wsEl('tr'); row.forEach(v => tr.appendChild(wsEl('td', '', typeof v === 'number' ? v.toLocaleString() : String(v ?? '')))); tbody.appendChild(tr); });
+  table.append(thead, tbody); wrap.appendChild(table); d.appendChild(wrap);
+  return d;
+}
+
+function renderInvestigation(inv) {
+  const r = inv.report, box = $('wsInvDetail');
+  const sec = (title, tag, items) => { const d = wsEl('div'); d.appendChild(wsEl('p', 'ws-item-title', title + (tag ? ` — ${tag}` : ''))); const ul = wsEl('ul', 'ws-list'); (items.length ? items : ['None.']).forEach(t => ul.appendChild(wsEl('li', 'ws-item-meta', t))); d.appendChild(ul); return d; };
+  const parts = [wsEl('p', 'ws-item-title', r.title),
+    sec('Facts', 'computed from the data', r.facts.map(f => `${f.id}: ${f.text}`)),
+    sec('Hypotheses', 'unverified, not facts', r.hypotheses.map(h => `${h.id}: ${h.text} (based on ${h.based_on.join(', ')})`)),
+    sec('Recommendations', 'suggestions', r.recommendations.map(x => `${x.text} (because ${x.because.join(', ')})`)),
+    sec('Limitations', '', r.limitations)];
+  r.tables.forEach(t => parts.push(invTableBlock(t)));
+  if (r.context_documents.length) parts.push(sec('Related document excerpts', 'untrusted context, not used in any figure', r.context_documents.map(c => `${c.document}${c.page ? ' p.' + c.page : ''}: ${c.text}`)));
+  const row = wsEl('div', 'ws-row');
+  Object.keys(inv.exports || {}).forEach(fmt => { const b = wsEl('button', 'btn-quiet', `Download ${fmt.toUpperCase()}`); b.type = 'button'; b.onclick = () => invDownload(inv.exports[fmt], fmt); row.appendChild(b); });
+  parts.push(row);
+  box.replaceChildren(...parts);
+}
+async function openInvestigation(id) {
+  const res = await apiGet(`/api/investigations/${encodeURIComponent(id)}`);
+  if (!res || !res.success) { $('wsInvDetail').replaceChildren(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'Could not load the investigation.')); return; }
+  renderInvestigation(res.investigation);
+}
+async function loadWsInvestigations() {
+  const w = activeWorkspace(), box = $('wsInvList'), form = $('wsInvForm');
+  if (!w) return;
+  form.hidden = !wsCan('analyst');
+  const [list, ds] = await Promise.all([apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/investigations`), apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/datasets`)]);
+  if (ds && ds.success) {
+    const ready = ds.datasets.filter(d => d.status === 'ready');
+    $('wsInvDataset').replaceChildren(...ready.map(d => new Option(d.name, d.id))); wsInvOptions = {};
+    $('wsInvRun').disabled = !ready.length;
+    if (!ready.length) $('wsInvDetail').replaceChildren(wsEl('p', 'ws-help', 'Analyses need a ready dataset in this workspace. Add one in Connect first.'));
+    invDatasetChanged();
+  }
+  if (!list || !list.success) { box.replaceChildren(wsEl('li', 'ws-empty', (list && list.error) || 'Could not load investigations.')); return; }
+  box.replaceChildren(...(list.investigations.length ? list.investigations.map(i => {
+    const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main'), b = wsEl('button', 'btn-quiet', i.title);
+    b.type = 'button'; b.onclick = () => openInvestigation(i.id);
+    main.appendChild(b); main.appendChild(wsEl('span', 'ws-item-meta', `dataset v${i.dataset_version} · ${wsWhen(i.created_at)}`)); li.appendChild(main);
+    const actions = wsEl('div', 'ws-item-actions'), del = wsEl('button', 'settings-copy-btn settings-danger', 'Delete'); del.type = 'button';
+    del.onclick = async () => {
+      if (!confirm(`Delete “${i.title}” and its exports?`)) return;
+      const r = await wsMutate('DELETE', `/api/investigations/${encodeURIComponent(i.id)}`);
+      setWsMessage(r && r.success ? 'Investigation deleted.' : ((r && r.error) || 'It could not be deleted.'), !(r && r.success));
+      $('wsInvDetail').replaceChildren(); loadWsInvestigations();
+    };
+    actions.appendChild(del); li.appendChild(actions); return li;
+  }) : [wsEl('li', 'ws-empty', 'No investigations yet.')]));
+}
+$('wsInvRefresh').onclick = () => loadWsInvestigations();
+$('wsInvForm').onsubmit = async (e) => {
+  e.preventDefault();
+  if (!$('wsInvDataset').value) { $('wsInvDetail').replaceChildren(wsEl('p', 'ws-help ws-quality-error', 'Choose a ready dataset first.')); return; }
+  const body = { kind: $('wsInvKind').value, table: $('wsInvTable').value, agg: $('wsInvAgg').value };
+  [['measure', 'wsInvMeasure'], ['date_column', 'wsInvDate'], ['dimension', 'wsInvDim']].forEach(([k, id]) => { if ($(id).value) body[k] = $(id).value; });
+  $('wsInvRun').disabled = true; $('wsInvDetail').replaceChildren(wsEl('p', 'ws-help', 'Analysing…'));
+  try {
+    const res = await wsMutate('POST', `/api/datasets/${encodeURIComponent($('wsInvDataset').value)}/investigations`, body);
+    if (!res || !res.success) { $('wsInvDetail').replaceChildren(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'The investigation could not be run.')); return; }
+    renderInvestigation(res.investigation); loadWsInvestigations();
+  } finally { $('wsInvRun').disabled = false; }
+};
+
+async function loadWsUsage() {
+  const w = activeWorkspace(), card = $('wsUsageCard'), box = $('wsUsage');
+  if (!w) return;
+  card.hidden = !wsCan('admin');
+  if (card.hidden) return;
+  const res = await apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/ai-usage?days=30`);
+  if (!res || !res.success) { box.replaceChildren(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'Could not load usage.')); return; }
+  const u = res.usage, rows = Object.entries(u.by_task);
+  const lines = rows.length ? rows.map(([t, v]) => wsEl('li', 'ws-item-meta', `${t}: ${v.calls} calls, ${v.failures} failed (${Math.round(v.failure_rate * 100)}%), ${fmtInt(v.input_tokens)} in / ${fmtInt(v.output_tokens)} out tokens, ~$${(v.cost_cents / 100).toFixed(4)}, p50 ${v.latency_ms_p50 ?? '–'} ms, p95 ${v.latency_ms_p95 ?? '–'} ms`)) : [wsEl('li', 'ws-empty', 'No AI calls recorded yet.')];
+  const acts = Object.entries(u.ai_actions).filter(([, n]) => n).map(([a, n]) => `${a}: ${n}`).join(' · ');
+  const ul = wsEl('ul', 'ws-list'); ul.replaceChildren(...lines);
+  box.replaceChildren(wsEl('p', 'ws-item-title', `${u.operations} AI operations · ~$${(u.total_cost_cents / 100).toFixed(4)} estimated`), ul, ...(acts ? [wsEl('p', 'ws-help', 'Requests: ' + acts)] : []));
+  const errs = Object.entries(u.top_errors).map(([k, n]) => `${k} ×${n}`).join(', ');
+  if (errs) box.appendChild(wsEl('p', 'ws-help', 'Top errors: ' + errs));
+}
+$('wsUsageRefresh').onclick = () => loadWsUsage();
+
+async function loadWsOverview() {
+  const w = activeWorkspace(), box = $('wsOverview');
+  if (!w) return;
+  const res = await apiGet(`/api/workspaces/${encodeURIComponent(w.id)}/overview`);
+  if (!res || !res.success) { box.replaceChildren(wsEl('p', 'ws-help ws-quality-error', (res && res.error) || 'Could not load the overview.')); return; }
+  const o = res.overview, d = o.datasets, q = d.by_quality, parts = [];
+  parts.push(wsEl('p', 'ws-item-title', o.attention_count ? `${o.attention_count} item${o.attention_count === 1 ? '' : 's'} need attention` : 'Nothing needs attention'));
+  const facts = [`Datasets: ${d.total} (${Object.entries(d.by_status).map(([k, n]) => n + ' ' + k).join(', ') || 'none'}); quality ok ${q.ok}, warnings ${q.warn}, errors ${q.error}`,
+    `Documents: ${o.knowledge.documents} (${fmtInt(o.knowledge.passages)} passages) · Your conversations: ${o.conversations.mine}`,
+    `Sync schedules: ${o.ingestion.schedules.enabled} on, ${o.ingestion.schedules.disabled} off, ${o.ingestion.schedules.last_failed} last run failed`];
+  if (o.ai) facts.push(`AI, last ${o.ai.window_days} days: ${o.ai.operations} operations, ${o.ai.failures} failed calls, ~$${(o.ai.total_cost_cents / 100).toFixed(4)}`);
+  const ul = wsEl('ul', 'ws-list'); ul.replaceChildren(...facts.map(t => wsEl('li', 'ws-item-meta', t)));
+  parts.push(ul);
+  const todo = [...d.attention.map(a => `Dataset “${a.name}”: ${a.status !== 'ready' ? a.status : 'quality ' + a.quality + ' (' + a.findings + ' findings)'}`),
+    ...o.agent.awaiting_approval.map(p => `Approval needed: ${p.tool} — ${p.goal}`)];
+  if (todo.length) { const t = wsEl('ul', 'ws-list'); t.replaceChildren(...todo.map(x => wsEl('li', 'ws-item-meta ws-quality-warn', x))); parts.push(wsEl('p', 'ws-item-title', 'Needs attention'), t); }
+  if (o.ingestion.recent_runs.length) { const r = wsEl('ul', 'ws-list'); r.replaceChildren(...o.ingestion.recent_runs.map(x => wsEl('li', 'ws-item-meta', `${x.dataset || 'dataset'} · ${x.mode} · ${x.status} · ${fmtInt(x.records_inserted)} rows · ${wsWhen(x.at)}`))); parts.push(wsEl('p', 'ws-item-title', 'Recent imports'), r); }
+  box.replaceChildren(...parts);
+}
+$('wsOverviewRefresh').onclick = () => loadWsOverview();
+
+async function loadWsDatasets() {
+  const box = $('wsDatasets');
+  const res = await apiGet(`/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/datasets`);
+  box.replaceChildren();
+  if (!res || !res.success) { box.appendChild(wsEl('p', 'ws-empty', (res && res.error) || 'Could not load datasets.')); return; }
+  if (!res.datasets.length) { box.appendChild(wsEl('p', 'ws-empty', 'No datasets yet. Upload a file while this workspace is active.')); return; }
+  const list = wsEl('ul', 'ws-list');
+  res.datasets.forEach(d => {
+    const li = wsEl('li', 'ws-item');
+    const main = wsEl('div', 'ws-item-main');
+    main.appendChild(wsEl('span', 'ws-item-title', d.name));
+    const fmt = d.file_format ? d.file_format.toUpperCase() : 'Dataset';
+    const who = d.created_by === currentUser.id ? 'you' : (d.created_by_email || 'a former member');
+    main.appendChild(wsEl('span', 'ws-item-meta',
+      `${fmt}${d.source_table ? ' · ' + d.source_table : ''} · v${d.version || 1}${d.status === 'importing' ? ' · importing…' : ''} · ${fmtInt(d.table_count)} table${d.table_count === 1 ? '' : 's'} · ${fmtInt(d.row_count)} rows · ${wsBytes(d.bytes)} · by ${who} · ${wsWhen(d.created_at)}`));
+    if (d.quality && d.quality.status !== 'ok') {
+      main.appendChild(wsEl('span', 'ws-item-meta ws-quality-' + d.quality.status,
+        `Data quality: ${d.quality.status === 'error' ? 'problems' : 'warnings'} (${d.quality.findings} finding${d.quality.findings === 1 ? '' : 's'}) — open Runs for details`));
+    }
+    li.appendChild(main);
+    const actions = wsEl('div', 'ws-item-actions');
+    const act = (label, action, cls) => {
+      const b = wsEl('button', 'settings-copy-btn' + (cls ? ' ' + cls : ''), label);
+      b.type = 'button'; b.dataset.wsAction = action; b.dataset.ds = d.id; b.dataset.dsName = d.name; b.dataset.sched = d.syncs_from_connection ? '1' : '';
+      if (d.status !== 'ready' && action !== 'runs') b.disabled = true;
+      return b;
+    };
+    actions.appendChild(act('Open', 'open'));
+    if (wsCan('analyst') && !d.syncs_from_connection) actions.appendChild(act('Re-import', 'reimport'));
+    if (wsCan('analyst') && d.syncs_from_connection) { actions.appendChild(act('Sync', 'sync')); actions.appendChild(act('Full refresh', 'fullsync')); }
+    actions.appendChild(act('Runs', 'runs'));
+    if (d.can_delete) {
+      const del = wsEl('button', 'settings-copy-btn settings-danger', 'Delete');
+      del.type = 'button';
+      del.dataset.datasetId = d.id;
+      del.dataset.datasetName = d.name;
+      actions.appendChild(del);
+    }
+    li.appendChild(actions);
+    list.appendChild(li);
+  });
+  box.appendChild(list);
+}
+
+async function loadWsMembers() {
+  const list = $('wsMembers');
+  const res = await apiGet(`/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/members`);
+  list.replaceChildren();
+  if (!res || !res.success) { list.appendChild(wsEl('li', 'ws-empty', (res && res.error) || 'Could not load members.')); return; }
+  const w = activeWorkspace();
+  const myRank = WS_ROLE_RANK[res.your_role] || 0;
+  res.members.forEach(m => {
+    const li = wsEl('li', 'ws-item');
+    const main = wsEl('div', 'ws-item-main');
+    main.appendChild(wsEl('span', 'ws-item-title', m.user_id === currentUser.id ? `${m.email} (you)` : m.email));
+    main.appendChild(wsEl('span', 'ws-item-meta', `${m.role} · joined ${wsWhen(m.joined_at)}`));
+    li.appendChild(main);
+    // Same rules the server enforces: owner manages admin/analyst/viewer, admin manages analyst/viewer; never self/owner.
+    const manageable = w && w.kind === 'team' && m.role !== 'owner' && m.user_id !== currentUser.id &&
+      (res.your_role === 'owner' || (myRank >= WS_ROLE_RANK.admin && m.role !== 'admin'));
+    if (manageable) {
+      const actions = wsEl('div', 'ws-item-actions');
+      const sel = wsEl('select', 'ws-input');
+      sel.setAttribute('aria-label', `Role for ${m.email}`);
+      sel.dataset.memberId = m.user_id;
+      (res.your_role === 'owner' ? ['admin', 'analyst', 'viewer'] : ['analyst', 'viewer']).forEach(r => {
+        const opt = wsEl('option', '', r); opt.value = r; sel.appendChild(opt);
+      });
+      sel.value = m.role;
+      const rm = wsEl('button', 'settings-copy-btn settings-danger', 'Remove');
+      rm.type = 'button';
+      rm.dataset.removeMember = m.user_id;
+      rm.dataset.memberEmail = m.email;
+      actions.append(sel, rm);
+      li.appendChild(actions);
+    }
+    list.appendChild(li);
+  });
+}
+
+function describeAudit(e) {
+  const d = e.details || {};
+  const parts = [];
+  if (d.name) parts.push(`“${d.name}”`);
+  if (d.previous_name) parts.push(`was “${d.previous_name}”`);
+  if (d.role) parts.push(d.previous_role ? `${d.previous_role} → ${d.role}` : `role ${d.role}`);
+  if (d.method) parts.push(`via ${d.method}`);
+  if (d.format) parts.push(String(d.format).toUpperCase());
+  if (d.status) parts.push(`status ${d.status}`);
+  if (typeof d.row_count === 'number') parts.push(`${fmtInt(d.row_count)} rows`);
+  if (typeof d.rows === 'number') parts.push(`${fmtInt(d.rows)} rows`);
+  if (typeof d.tables === 'number') parts.push(`${d.tables} table${d.tables === 1 ? '' : 's'}`);
+  if (typeof d.rehomed === 'number' && d.rehomed) parts.push(`${d.rehomed} dataset(s) moved to personal workspaces`);
+  return parts.join(' · ');
+}
+
+async function loadWsAudit(more) {
+  const list = $('wsAudit');
+  if (!more) { wsAuditCursor = null; list.replaceChildren(); }
+  const qs = new URLSearchParams({ limit: '30' });
+  if (more && wsAuditCursor) qs.set('before', wsAuditCursor);
+  const res = await apiGet(`/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/audit?${qs}`);
+  if (!res || !res.success) { list.appendChild(wsEl('li', 'ws-empty', (res && res.error) || 'Could not load the audit trail.')); $('wsAuditMore').hidden = true; return; }
+  if (!more && !res.entries.length) list.appendChild(wsEl('li', 'ws-empty', 'No activity recorded yet.'));
+  res.entries.forEach(e => {
+    const li = wsEl('li', 'ws-item');
+    const main = wsEl('div', 'ws-item-main');
+    const actor = e.actor_type !== 'user' ? e.actor_type : (e.actor_id === currentUser.id ? 'You' : (e.actor_email || 'Former member'));
+    main.appendChild(wsEl('span', 'ws-item-title', `${actor}: ${WS_ACTION_LABELS[e.action] || e.action}`));
+    const extra = describeAudit(e);
+    main.appendChild(wsEl('span', 'ws-item-meta', `${wsWhen(e.created_at)}${extra ? ' · ' + extra : ''}`));
+    li.appendChild(main);
+    list.appendChild(li);
+  });
+  wsAuditCursor = res.next_cursor;
+  $('wsAuditMore').hidden = !res.next_cursor;
+}
+
+async function wsMutate(method, url, body) {
+  const init = { method, headers: authHeaders(body ? { 'Content-Type': 'application/json' } : {}) };
+  if (body) init.body = JSON.stringify(body);
+  return _request(url, init);
+}
+
+async function wsAfterChange(res, okText) {
+  if (!res || !res.success) { setWsMessage((res && res.error) || 'The change could not be saved.', true); return false; }
+  await loadWorkspaceView();
+  setWsMessage(okText);
+  return true;
+}
+
+$('wsSelect').onchange = (e) => { setActiveWorkspace(e.target.value); loadWorkspaceView(); };
+$('wsRefresh').onclick = () => loadWorkspaceView();
+$('wsAuditMore').onclick = () => loadWsAudit(true);
+
+$('wsCreateForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = $('wsNewName').value.trim();
+  if (!name) return;
+  const res = await wsMutate('POST', '/api/workspaces', { name });
+  if (res && res.success) { $('wsNewName').value = ''; setActiveWorkspace(res.workspace.id); }
+  await wsAfterChange(res, `Created “${name}”. You are its owner.`);
+};
+
+$('wsRenameForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const res = await wsMutate('PATCH', `/api/workspaces/${encodeURIComponent(activeWorkspaceId)}`, { name: $('wsRenameName').value });
+  await wsAfterChange(res, 'Workspace renamed.');
+};
+
+$('wsInviteForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const email = $('wsInviteEmail').value.trim();
+  const status = $('wsInviteStatus');
+  const res = await wsMutate('POST', `/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/members`, { email, role: $('wsInviteRole').value });
+  const ok = await wsAfterChange(res, `Added ${email}.`);
+  status.textContent = ok ? `Added ${email}.` : ((res && res.error_code) === 'USER_NOT_FOUND'
+    ? `${email} has no verified QuerySure account. They must register and confirm their e-mail first.`
+    : ((res && res.error) || 'The member could not be added.'));
+  status.classList.toggle('ws-quality-error', !ok);
+  if (ok) $('wsInviteEmail').value = '';
+};
+
+$('wsMembers').onchange = async (e) => {
+  const sel = e.target.closest('select[data-member-id]');
+  if (!sel) return;
+  const res = await wsMutate('PATCH', `/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/members/${encodeURIComponent(sel.dataset.memberId)}`, { role: sel.value });
+  await wsAfterChange(res, 'Role updated.');
+};
+
+$('wsMembers').onclick = async (e) => {
+  const btn = e.target.closest('button[data-remove-member]');
+  if (!btn || !confirm(`Remove ${btn.dataset.memberEmail} from this workspace? Their datasets here move back to their personal workspace.`)) return;
+  const res = await wsMutate('DELETE', `/api/workspaces/${encodeURIComponent(activeWorkspaceId)}/members/${encodeURIComponent(btn.dataset.removeMember)}`);
+  await wsAfterChange(res, 'Member removed.');
+};
+
+$('wsDatasets').onclick = async (e) => {
+  const btn = e.target.closest('button[data-dataset-id]');
+  if (!btn || !confirm(`Delete “${btn.dataset.datasetName}”? The stored file is removed and any session using it is emptied. This cannot be undone.`)) return;
+  const res = await wsMutate('DELETE', `/api/datasets/${encodeURIComponent(btn.dataset.datasetId)}`);
+  if (res && res.success && res.sessions_cleared && dbConnected && !(currentDataset && currentDataset.sample)) {
+    // If the active session was one of those emptied, stop showing a dataset that no longer exists.
+    const mine = await apiGet('/api/sessions');
+    const active = mine && mine.success && (mine.sessions || []).find(s => s.session_id === sessionId);
+    if (active && !active.has_dataset) resetWorkspaceUI();
+  }
+  await wsAfterChange(res, 'Dataset deleted.');
+};
+
+// ---- Dataset actions (Sprint 3): open in my session, re-import a new file version, import runs and quarantine
+function describeRun(r) {
+  const parts = [`${fmtInt(r.records_read)} read`, `${fmtInt(r.records_inserted)} inserted`];
+  if (r.records_updated) parts.push(`${fmtInt(r.records_updated)} updated`);
+  if (r.records_skipped) parts.push(`${fmtInt(r.records_skipped)} unchanged`);
+  if (r.records_rejected) parts.push(`${fmtInt(r.records_rejected)} rejected`);
+  if (r.duplicate_rows) parts.push(`${fmtInt(r.duplicate_rows)} duplicate rows kept`);
+  return parts.join(' · ');
+}
+function describeChange(c) {
+  const where = c.column ? `${c.table}.${c.column}` : c.table;
+  const what = String(c.change).replace('_', ' ');
+  const detail = c.change === 'type_changed' ? ` ${c.from} → ${c.to}${c.compatible ? '' : ' (incompatible)'}` : '';
+  return `${where}: ${what}${detail}`;
+}
+let wsSchedDataset = null;
+async function loadSchedule(id) {
+  const box = $('wsSchedule');
+  const res = await apiGet(`/api/datasets/${encodeURIComponent(id)}/schedule`);
+  if (!res || !res.success) { box.hidden = true; return; }
+  wsSchedDataset = id; box.hidden = false;
+  const min = res.min_interval_minutes || 5, s = res.schedule;
+  Array.from($('wsSchedSel').options).forEach(o => { o.disabled = o.value !== '0' && parseInt(o.value, 10) < min; });
+  if (s && s.enabled && !Array.from($('wsSchedSel').options).some(o => o.value === String(s.interval_minutes))) {
+    const custom = wsEl('option', '', `Every ${s.interval_minutes} minutes`); custom.value = String(s.interval_minutes); $('wsSchedSel').appendChild(custom);
+  }
+  $('wsSchedSel').value = s && s.enabled ? String(s.interval_minutes) : '0';
+  $('wsSchedSel').disabled = $('wsSchedSave').disabled = !wsCan('analyst');
+  $('wsSchedHelp').textContent = (s ? (s.enabled ? `Next run ${wsWhen(s.next_run_at)} · last run ${s.last_status || 'none yet'}`
+    : `Paused${s.disabled_reason ? ' (' + String(s.disabled_reason).replace(/_/g, ' ') + ')' : ''}`) + '. ' : '') +
+    'Scheduled syncs run only while a scheduler process is running (python scheduler.py or the compose scheduler service).';
+}
+$('wsSchedSave').onclick = async () => {
+  const minutes = parseInt($('wsSchedSel').value, 10);
+  const url = `/api/datasets/${encodeURIComponent(wsSchedDataset)}/schedule`;
+  const res = minutes ? await wsMutate('PUT', url, { interval_minutes: minutes, mode: 'incremental' }) : await wsMutate('DELETE', url);
+  setWsMessage(res && res.success ? (minutes ? 'Schedule saved.' : 'Schedule removed.') : ((res && res.error) || 'The schedule could not be saved.'), !(res && res.success));
+  loadSchedule(wsSchedDataset);
+};
+async function showDatasetQuality(id) {
+  const box = $('wsQuality'); box.replaceChildren();
+  const res = await apiGet(`/api/datasets/${encodeURIComponent(id)}/quality`);
+  if (!res || !res.success || !res.latest) return;
+  const q = res.latest, label = { ok: 'no problems found', warn: 'warnings', error: 'problems' }[q.status] || q.status;
+  box.appendChild(wsEl('p', 'ws-help ws-quality-' + q.status, `Data quality of v${q.dataset_version}: ${label}.`));
+  const ul = wsEl('ul', 'ws-list');
+  q.findings_list.slice(0, 25).forEach(f => ul.appendChild(wsEl('li', 'ws-item', `${f.severity} · ${f.message}`)));
+  if (q.findings_list.length > 25) ul.appendChild(wsEl('li', 'ws-item', `…and ${q.findings_list.length - 25} more.`));
+  box.appendChild(ul);
+  const tables = Object.entries(q.profile || {}).map(([t, v]) => `${t}: ${fmtInt(v.rows)} rows, ${Object.keys(v.columns).length} columns`);
+  if (tables.length) box.appendChild(wsEl('p', 'ws-help', `Profiled — ${tables.slice(0, 8).join(' · ')}`));
+}
+async function showDatasetRuns(id, name, scheduled) {
+  $('wsRunsCard').hidden = false;
+  if (scheduled) loadSchedule(id); else $('wsSchedule').hidden = true;
+  $('wsRunsHelp').textContent = `Imports of “${name}”, newest first.`;
+  const list = $('wsRuns'); list.replaceChildren(); $('wsQuarantine').replaceChildren();
+  showDatasetQuality(id);
+  const res = await apiGet(`/api/datasets/${encodeURIComponent(id)}/runs`);
+  if (!res || !res.success) { list.appendChild(wsEl('li', 'ws-empty', (res && res.error) || 'Could not load import runs.')); return; }
+  if (!res.runs.length) list.appendChild(wsEl('li', 'ws-empty', 'No imports recorded yet.'));
+  res.runs.forEach(r => {
+    const li = wsEl('li', 'ws-item');
+    const main = wsEl('div', 'ws-item-main');
+    main.appendChild(wsEl('span', 'ws-item-title', `${r.status}${r.dataset_version ? ' · v' + r.dataset_version : ''}${r.mode === 'incremental' ? ' · incremental' : ''} · ${r.source_name || r.connector}`));
+    main.appendChild(wsEl('span', 'ws-item-meta', `${wsWhen(r.started_at)} · ${r.status === 'skipped' ? 'identical to the current version, nothing imported' : describeRun(r)}`));
+    const reasons = Object.entries(r.reject_reasons || {}).map(([k, v]) => `${k.replace('_', ' ')} ×${fmtInt(v)}`);
+    if (reasons.length) main.appendChild(wsEl('span', 'ws-item-meta', `Rejected: ${reasons.join(', ')}`));
+    (r.schema_changes || []).slice(0, 12).forEach(c => main.appendChild(wsEl('span', 'ws-item-meta', `Schema change · ${describeChange(c)}`)));
+    if (r.error_code && r.status !== 'skipped') main.appendChild(wsEl('span', 'ws-item-meta', `${r.error_code}${r.error_detail ? ': ' + r.error_detail : ''}`));
+    li.appendChild(main); list.appendChild(li);
+  });
+  if (wsCan('analyst')) {
+    const q = await apiGet(`/api/datasets/${encodeURIComponent(id)}/quarantine`);
+    if (q && q.success && q.rows.length) {
+      const box = $('wsQuarantine');
+      box.appendChild(wsEl('p', 'ws-help', `Rejected rows of the current version (first ${q.rows.length}; values are not stored):`));
+      const ul = wsEl('ul', 'ws-list');
+      q.rows.forEach(x => ul.appendChild(wsEl('li', 'ws-item', `${x.table} · row ${x.row}${x.column ? ' · ' + x.column : ''} · ${String(x.reason).replace('_', ' ')}`)));
+      box.appendChild(ul);
+    }
+  }
+}
+async function openCatalogDataset(id) {
+  if (pipelineIsBusy) { setWsMessage('Wait for the current run to finish.', true); return; }
+  if (!(await ensureSession())) return;
+  const res = await post(`/api/datasets/${encodeURIComponent(id)}/open`, { session_id: sessionId });
+  if (!res || !res.success) { setWsMessage((res && res.error) || 'The dataset could not be opened.', true); return; }
+  sessionId = res.session_id;
+  onDatasetActivated();
+  dbConnected = true;
+  currentDataset = { name: res.db_name || 'Dataset', tables: res.table_count, rows: res.total_rows, size: res.db_size, sample: false };
+  refreshSettingsView();
+  setStatus('Connected · ' + (res.db_name || 'Dataset'), true);
+  renderSchemaList(res.tables);
+  stageDone('connect', res); setPipelineState('Connected');
+  switchView('workspace', 'explore');
+}
+async function reimportDataset(id, file) {
+  const fd = new FormData(); fd.append('file', file);
+  setWsMessage('Uploading…');
+  const res = await postForm(`/api/datasets/${encodeURIComponent(id)}/runs`, fd);
+  if (!res || !res.success) { setWsMessage((res && res.error) || 'The re-import could not be started.', true); return; }
+  setWsMessage('Re-import queued…');
+  let msg, bad = false;
+  try {
+    const done = await pollJob(res.job_id, 'Re-import');
+    msg = done && done.run_status === 'skipped' ? 'The file is identical to the current version; nothing was imported.'
+      : 'Re-import finished. Open the dataset again to use the new version.';
+  } catch (e) { msg = e.message || 'The re-import failed.'; bad = true; }
+  await loadWorkspaceView();
+  setWsMessage(msg, bad);
+  showDatasetRuns(id, file.name);
+}
+$('wsDatasets').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-ws-action]');
+  if (!b || b.disabled) return;
+  const id = b.dataset.ds;
+  if (b.dataset.wsAction === 'open') openCatalogDataset(id);
+  else if (b.dataset.wsAction === 'runs') showDatasetRuns(id, b.dataset.dsName, !!b.dataset.sched);
+  else if (b.dataset.wsAction === 'reimport') { $('wsReimportInput').dataset.ds = id; $('wsReimportInput').click(); }
+  else if (b.dataset.wsAction === 'sync' || b.dataset.wsAction === 'fullsync') syncDataset(id, b.dataset.wsAction === 'sync' ? 'incremental' : 'full_refresh', b.dataset.dsName);
+});
+
+// ---- Database connections (Sprint 4). Credentials are write-only: the API never returns a password, the form clears it.
+const CONN_DEFAULT_PORT = { postgres: 5432, mysql: 3306 };
+const CONN_TEMPLATES = {
+  rest: { base_url: 'https://api.example.com', auth: { type: 'bearer' },
+    resources: [{ name: 'orders', path: '/v1/orders', records_path: 'data', primary_key: ['id'],
+      pagination: { type: 'page', param: 'page', size_param: 'per_page', size: 100 },
+      updated_since: { param: 'updated_since', field: 'updated_at', format: 'iso' } }] },
+  s3: { bucket: 'my-bucket', region: 'us-east-1', access_key_id: 'AKIA…', resources: [{ name: 'exports', prefix: 'exports/', format: 'csv' }] },
+};
+const connIsDb = t => t === 'postgres' || t === 'mysql';
+const CONN_ERRORS = { AUTH_FAILED: 'The server rejected the user name or password.', CONNECT_FAILED: 'The database could not be reached.',
+  HOST_NOT_ALLOWED: 'Connections to private or internal addresses are not allowed on this server.', TLS_FAILED: 'A secure connection could not be established.',
+  DATABASE_NOT_FOUND: 'The database does not exist.', QUERY_TIMEOUT: 'The query took too long.', PERMISSION_DENIED: 'The user is not allowed to read this.' };
+let wsImportConn = null, wsImportTables = [];
+async function loadWsConnections() {
+  const card = $('wsConnCard'), list = $('wsConnections');
+  if (!wsCan('analyst')) { card.hidden = true; return; }
+  const res = await apiGet(`/api/connections?workspace_id=${encodeURIComponent(activeWorkspaceId)}`);
+  card.hidden = false; list.replaceChildren();
+  $('wsConnForm').hidden = !wsCan('admin');
+  if (!res || !res.success) { list.appendChild(wsEl('li', 'ws-empty', (res && res.error) || 'Could not load connections.')); return; }
+  if (!res.encryption_configured) $('wsConnHelp').textContent = 'Saved connections are not configured on this server (CONNECTIONS_ENCRYPTION_KEY is not set).';
+  if (!res.connections.length) list.appendChild(wsEl('li', 'ws-empty', 'No connections yet.'));
+  res.connections.forEach(c => {
+    const li = wsEl('li', 'ws-item'), main = wsEl('div', 'ws-item-main');
+    const kindLabel = { mysql: 'MySQL', postgres: 'PostgreSQL', rest: 'REST API', s3: 'S3' }[c.connector] || c.connector;
+    main.appendChild(wsEl('span', 'ws-item-title', `${c.name} · ${kindLabel}${c.status === 'disabled' ? ' · disabled' : ''}`));
+    const test = c.last_test_at ? (c.last_test_ok ? 'last test OK' : `last test failed (${c.last_test_error || 'error'})`) : 'not tested';
+    main.appendChild(wsEl('span', 'ws-item-meta', `${c.summary || ''}${c.ssl_mode ? ' · ' + c.ssl_mode : ''} · ${c.has_password ? 'secret saved' : 'no secret'} · ${test}`));
+    li.appendChild(main);
+    const actions = wsEl('div', 'ws-item-actions');
+    const btn = (label, action, cls) => { const b = wsEl('button', 'settings-copy-btn' + (cls ? ' ' + cls : ''), label); b.type = 'button'; b.dataset.connAction = action; b.dataset.conn = c.id; b.dataset.connName = c.name; return b; };
+    actions.appendChild(btn('Test', 'test'));
+    if (c.status === 'active') actions.appendChild(btn('Import…', 'import'));
+    if (c.can_manage) {
+      actions.appendChild(btn(c.status === 'active' ? 'Disable' : 'Enable', c.status === 'active' ? 'disable' : 'enable'));
+      actions.appendChild(btn('Delete', 'delete', 'settings-danger'));
+    }
+    li.appendChild(actions); list.appendChild(li);
+  });
+}
+function fillImportForm() {
+  const t = wsImportTables.find(x => x.name === $('wsImpTable').value);
+  const wm = $('wsImpWm'), mode = $('wsImpMode');
+  wm.replaceChildren();
+  const ready = !!(t && t.incremental_ready);
+  mode.querySelector('option[value="incremental"]').disabled = !ready;
+  if (!ready) mode.value = 'full_refresh';
+  ((t && t.columns) || []).filter(c => c.watermark_ok).forEach(c => { const o = wsEl('option', '', `${c.name} (${c.type})`); o.value = c.name; wm.appendChild(o); });
+  wm.hidden = mode.value !== 'incremental' || !!(t && t.watermark);
+  $('wsImpHelp').textContent = !t ? '' : (ready
+    ? (t.watermark ? `Incremental syncs read only what changed since the last run (watermark: ${t.watermark}). Use Full refresh to reconcile deletions.`
+      : `Primary key: ${t.primary_key.join(', ')}. Incremental syncs read only rows whose watermark column has moved (deletions are not detected; use Full refresh to reconcile).`)
+    : (t.primary_key.length ? 'No integer or timestamp column to use as a watermark: full refresh only.' : 'Incremental is not available for this source: full refresh only.'));
+}
+async function openImportForm(connId, name) {
+  setWsMessage('Reading the schema…');
+  const res = await apiGet(`/api/connections/${encodeURIComponent(connId)}/schema`);
+  if (!res || !res.success) { setWsMessage(CONN_ERRORS[res && res.error_code] || (res && res.error) || 'Could not read the schema.', true); return; }
+  setWsMessage('');
+  wsImportConn = connId; wsImportTables = res.tables;
+  const sel = $('wsImpTable'); sel.replaceChildren();
+  res.tables.forEach(t => { const o = wsEl('option', '', t.name + (t.is_view ? ' (view)' : '')); o.value = t.name; sel.appendChild(o); });
+  $('wsImpTitle').textContent = `Import a table from “${name}”`;
+  $('wsImportForm').hidden = false; fillImportForm();
+}
+async function syncDataset(id, mode, name) {
+  setWsMessage(`${mode === 'incremental' ? 'Sync' : 'Full refresh'} started…`);
+  const res = await post(`/api/datasets/${encodeURIComponent(id)}/sync`, { mode });
+  if (!res || !res.success) { setWsMessage((res && res.error) || 'The sync could not be started.', true); return; }
+  let msg, bad = false;
+  try {
+    const done = await pollJob(res.job_id, 'Sync');
+    const note = done.fallback_reason ? ` (full refresh instead: ${String(done.fallback_reason).replace(/_/g, ' ')})` : '';
+    msg = `${done.mode === 'incremental' ? 'Incremental sync' : 'Full refresh'} finished${note}: ${fmtInt(done.records_inserted)} new, ${fmtInt(done.records_updated || 0)} changed, ${fmtInt(done.records_skipped || 0)} unchanged, ${fmtInt(done.records_rejected)} rejected. Open the dataset again to use the new version.`;
+  } catch (e) { msg = e.message || 'The sync failed.'; bad = true; }
+  await loadWorkspaceView(); setWsMessage(msg, bad); showDatasetRuns(id, name || 'dataset', true);
+}
+function syncConnForm() {
+  const t = $('wsConnType').value, db = connIsDb(t);
+  $('wsConnDbRow').hidden = !db; $('wsConnUser').hidden = !db; $('wsConnSsl').hidden = !db; $('wsConnJsonRow').hidden = db;
+  $('wsConnPass').placeholder = db ? 'Password' : (t === 'rest' ? 'Token or password' : 'Secret access key');
+  if (db) $('wsConnPort').value = CONN_DEFAULT_PORT[t] || '';
+  else $('wsConnJson').value = JSON.stringify(CONN_TEMPLATES[t], null, 2);
+}
+$('wsConnType').onchange = syncConnForm;
+$('wsConnRefresh').onclick = () => loadWsConnections();
+$('wsConnForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const type = $('wsConnType').value;
+  let config;
+  if (connIsDb(type)) config = { host: $('wsConnHost').value.trim(), port: parseInt($('wsConnPort').value, 10), database: $('wsConnDb').value.trim(), user: $('wsConnUser').value.trim(), ssl_mode: $('wsConnSsl').value };
+  else { try { config = JSON.parse($('wsConnJson').value); } catch (_) { setWsMessage('The connection settings are not valid JSON.', true); return; } }
+  const body = { workspace_id: activeWorkspaceId, name: $('wsConnName').value, connector: type, password: $('wsConnPass').value || null, config };
+  const res = await wsMutate('POST', '/api/connections', body);
+  $('wsConnPass').value = '';
+  if (res && res.success) { $('wsConnForm').reset(); syncConnForm(); setWsMessage(`Saved “${body.name}”. Use Test to check it.`); await loadWsConnections(); }
+  else setWsMessage((res && res.error) || 'The connection could not be saved.', true);
+};
+$('wsConnections').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-conn-action]');
+  if (!b) return;
+  const id = b.dataset.conn, action = b.dataset.connAction, base = `/api/connections/${encodeURIComponent(id)}`;
+  if (action === 'import') { openImportForm(id, b.dataset.connName); return; }
+  if (action === 'test') {
+    setWsMessage('Testing…');
+    const res = await wsMutate('POST', base + '/test');
+    if (res && res.success) setWsMessage(res.ok ? res.message : (CONN_ERRORS[res.error_code] || 'The connection test failed.'), !res.ok);
+    else setWsMessage((res && res.error) || 'The test could not run.', true);
+    await loadWsConnections(); return;
+  }
+  if (action === 'delete' && !confirm(`Delete the connection “${b.dataset.connName}”? Its saved password is erased. Datasets already imported keep their data but stop syncing.`)) return;
+  const res = action === 'delete' ? await wsMutate('DELETE', base) : await wsMutate('POST', `${base}/${action}`);
+  setWsMessage(res && res.success ? (action === 'delete' ? 'Connection deleted.' : 'Connection updated.') : ((res && res.error) || 'The change could not be saved.'), !(res && res.success));
+  await loadWorkspaceView();
+});
+$('wsImpTable').onchange = fillImportForm;
+$('wsImpMode').onchange = fillImportForm;
+$('wsImpCancel').onclick = () => { $('wsImportForm').hidden = true; };
+$('wsImportForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const mode = $('wsImpMode').value;
+  const res = await wsMutate('POST', `/api/connections/${encodeURIComponent(wsImportConn)}/datasets`,
+    { table: $('wsImpTable').value, mode, watermark_column: mode === 'incremental' && !$('wsImpWm').hidden ? $('wsImpWm').value : null });
+  if (!res || !res.success) { setWsMessage(CONN_ERRORS[res && res.error_code] || (res && res.error) || 'The import could not be started.', true); return; }
+  $('wsImportForm').hidden = true; setWsMessage('Import started…');
+  let msg, bad = false;
+  try {
+    const done = await pollJob(res.job_id, 'Import');
+    msg = `Imported ${fmtInt(done.records_inserted)} rows${done.records_rejected ? `, ${fmtInt(done.records_rejected)} rejected` : ''}.`;
+  } catch (err) { msg = err.message || 'The import failed.'; bad = true; }
+  await loadWorkspaceView();
+  setWsMessage(msg, bad);
+};
+$('wsReimportInput').onchange = (e) => {
+  const input = e.target, file = input.files && input.files[0], id = input.dataset.ds;
+  input.value = '';
+  if (file && id) reimportDataset(id, file);
+};
+$('wsRunsClose').onclick = () => { $('wsRunsCard').hidden = true; };
+
+$('wsLeaveBtn').onclick = async () => {
+  const w = activeWorkspace();
+  if (!w || !confirm(`Leave “${w.name}”? Your datasets there move back to your personal workspace.`)) return;
+  const res = await wsMutate('DELETE', `/api/workspaces/${encodeURIComponent(w.id)}/members/${encodeURIComponent(currentUser.id)}`);
+  if (res && res.success) setActiveWorkspace('');
+  await wsAfterChange(res, `You left “${w.name}”.`);
+};
+
+$('wsDeleteBtn').onclick = async () => {
+  const w = activeWorkspace();
+  if (!w || !confirm(`Delete “${w.name}”? Members lose access, its audit trail is erased, and every dataset moves back to its uploader's personal workspace.`)) return;
+  const res = await wsMutate('DELETE', `/api/workspaces/${encodeURIComponent(w.id)}`);
+  if (res && res.success) setActiveWorkspace('');
+  await wsAfterChange(res, `Deleted “${w.name}”.`);
+};
+
 (async function boot() {
   if (!authToken) { bootSiteRoute(); return; }
   const me = await apiGet('/api/auth/me');
@@ -2850,6 +3822,7 @@ $('downloadJsonBtn').onclick = () => download('querysure-result.json', JSON.stri
   setCurrentUser(me, await apiGet('/api/auth/methods'));
   refreshSettingsView();
   resetWorkspaceUI();
+  loadWorkspaces();
   hideAuthGate();
   await newSession();
   refreshUsage();
@@ -3019,3 +3992,183 @@ async function openHistoryEntry(id) {
 wireStages();
 syncAuthFieldEligibility();
 setDeleteFieldsEligible(false);
+
+// ---------------------------------------------------------------- platform pages
+// Every top-bar tab is a page. Workspace-backed pages (Overview, Documents, Investigate, Agent, Data, Team) share
+// #view-workspace and show only their own cards; Query, History and Evaluation are their own views.
+var WS_PAGES = {
+  home:        { name: 'Overview',    title: 'Your AI data workspace',            sub: 'Connect a source, explore it, investigate and analyse it, query it in plain English and ask your documents. Everything here belongs to the active workspace.' },
+  connect:     { name: 'Connect',     title: 'Connect data sources',              sub: 'Upload files or import tables from PostgreSQL and MySQL. Every import is versioned and quality-checked before anything uses it.' },
+  explore:     { name: 'Explore',     title: 'Explore datasets and schemas',      sub: 'Browse the datasets in this workspace, open one, and inspect its tables, columns, keys and a safe preview of its rows.' },
+  investigate: { name: 'Investigate', title: 'Agent investigations',              sub: 'Describe what you need. The agent plans steps from a fixed set of tools; anything that changes data waits for a person to approve it.' },
+  analyze:     { name: 'Analyze',     title: 'Analyses with charts',              sub: 'Trend, period comparison or segment breakdown of a dataset, charted. Facts come from real queries; guesses are labelled.' },
+  knowledge:   { name: 'Knowledge',   title: 'Knowledge base',                    sub: 'Upload documents, search their passages and ask questions answered only from them, with passage-level citations.' },
+  team:        { name: 'Team',        title: 'Members, activity and AI usage',    sub: 'Who can do what in this workspace, a record of what was done, and what the AI features cost.' },
+};
+var wsPageNow = 'home';
+
+function setWsPage(page) {
+  if (!WS_PAGES[page]) page = 'home';
+  wsPageNow = page;
+  const meta = WS_PAGES[page];
+  $('wsGrid').dataset.page = page;
+  $('wsPageName').textContent = meta.name; $('wsPageTitle').textContent = meta.title; $('wsPageSub').textContent = meta.sub;
+  const btn = $('wsFlowBtn'); btn.dataset.flow = page; btn.hidden = page === 'home';   // Overview shows its chart inline
+  if (page === 'home') { $('flowWs').hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.textContent = 'How it works'; if (!$('wsJourney').firstChild) renderFlow($('wsJourney'), 'journey'); }
+  else if (!$('flowWs').hidden) renderFlow($('flowWs'), page);
+  markActiveTab('workspace');
+}
+
+function markActiveTab(view) {
+  const owner = { history: 'ask' }[view] || view;
+  document.querySelectorAll('.nav-tab[data-view]').forEach(b => {
+    const on = b.dataset.view === owner && (owner !== 'workspace' || b.dataset.wsPage === wsPageNow);
+    b.classList.toggle('active', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  const active = document.querySelector('.nav-tab.active');   // on narrow screens the tab row scrolls; keep the current tab in view
+  if (active) { const bar = active.parentElement; bar.scrollLeft = Math.max(0, active.offsetLeft - (bar.clientWidth - active.offsetWidth) / 2); }
+}
+
+// Every in-page link to another workspace (menu items, Overview shortcuts, "Manage", "Open …") goes through switchView.
+document.querySelectorAll('.js-nav[data-view]').forEach(el => {
+  el.addEventListener('click', () => { closeNavMenus(null); switchView(el.dataset.view, el.dataset.wsPage); });
+});
+
+
+// ---------------------------------------------------------------- "How it works" flowcharts
+// Each chart describes what the code actually does, step by step, and who does each step: you, QuerySure's own code,
+// the AI model, the background worker or an approving person. Selecting a step explains it in full.
+const FLOW_ACTORS = { you: 'You', system: 'QuerySure', ai: 'AI model', worker: 'Background worker', person: 'Approver' };
+const FLOWS = {
+  query: { title: 'Query', foot: 'The AI model writes SQL and nothing else. Every other step is ordinary, tested code, so a wrong answer can be traced to the step that caused it.', steps: [
+    { a: 'you', t: 'Ask', s: 'A question in plain English', d: 'You type a question about the dataset connected in this session: the retail sample, a file you uploaded, or a dataset opened from Data.' },
+    { a: 'system', t: 'Ground', s: 'Find the relevant tables', d: 'QuerySure searches the dataset\'s schema for the tables and columns that match your words and works out how they join through their keys. Only that slice of the schema goes to the next steps; your rows never do.' },
+    { a: 'system', t: 'Plan', s: 'Decide the query shape', d: 'Fixed rules decide what is being measured, how it is grouped and filtered, the time window and the joins. No AI is used in this step.' },
+    { a: 'ai', t: 'Generate SQL', s: 'Write one SELECT', d: 'The AI model receives the plan and the schema slice and writes a single SELECT statement. That is its only job: it does not run the query and does not see your data.' },
+    { a: 'system', t: 'Validate', s: 'Check before running', d: 'The SQL is parsed and checked against an allow-list: one read-only SELECT, only tables and columns that exist, no writes, no file or database attachment, a row limit applied.', x: 'SQL that fails a check is never run. You see which check failed.' },
+    { a: 'system', t: 'Execute', s: 'Run read-only', d: 'The query runs on a read-only connection with a time limit. At most 1,000 rows come back.' },
+    { a: 'system', t: 'Verify', s: 'Recompute independently', d: 'A second, separately built query recalculates the main number. If they match, the answer is labelled "Independently verified".', x: 'If it cannot be checked (often for multi-table questions) the answer says "Not independently verified". Treat it as a draft.' },
+    { a: 'system', t: 'Answer', s: 'Result with its working', d: 'You get the answer, the result table, the SQL, the validation findings, a reliability score and a step-by-step trace. A read-only copy is saved to History.' },
+  ]},
+  journey: { title: 'QuerySure', foot: 'The AI model is used in three places only: writing SQL in Query, planning in Investigate and answering from passages in Knowledge. Everything else is deterministic code.', steps: [
+    { a: 'you', t: 'Connect', s: 'Files and databases', d: 'Upload CSV, JSON, Excel, Parquet or SQLite, or import tables from PostgreSQL or MySQL. Each import becomes a versioned, quality-checked dataset.', go: 'connect' },
+    { a: 'system', t: 'Explore', s: 'Datasets and schemas', d: 'See every dataset in the workspace with its version and quality, then open one to browse its tables, columns, keys and a safe preview.', go: 'explore' },
+    { a: 'ai', t: 'Investigate', s: 'Agent-planned work', d: 'Give the agent a goal. It plans steps from six fixed tools; read steps run at once and anything that changes data waits for approval.', go: 'investigate' },
+    { a: 'system', t: 'Analyze', s: 'Charts and explanations', d: 'Trend, comparison and breakdown analyses run fixed, read-only queries and chart the results. Hypotheses are labelled unverified.', go: 'analyze' },
+    { a: 'ai', t: 'Query', s: 'Plain English to SQL', d: 'Ask a question; one validated, read-only SELECT answers it. The result table and chart come first, with the SQL and its checks underneath.', go: 'query' },
+    { a: 'ai', t: 'Knowledge', s: 'Cited document answers', d: 'Upload documents and ask about them. Answers cite the passages they use; an answer without valid citations is withheld.', go: 'knowledge' },
+  ]},
+  explore: { title: 'Explore', foot: 'Explore only reads. Opening a dataset connects it to your session so Query can use it; nothing in the dataset changes.', steps: [
+    { a: 'system', t: 'Catalog', s: 'Every workspace dataset', d: 'The catalog lists each dataset with its type, version, tables, rows, size, owner and import time. Members see the catalog; files stay readable only by the account that uploaded them.' },
+    { a: 'you', t: 'Open', s: 'Use it in this session', d: 'Open makes the dataset the active one for this session, so the schema explorer and Query both use it.' },
+    { a: 'system', t: 'Schema', s: 'Tables, columns, keys', d: 'Each table shows its columns, types, primary and foreign keys and the relationships between tables, with counts of tables, rows and relationships.' },
+    { a: 'system', t: 'Preview', s: 'Safe, paged rows', d: 'A read-only, paged preview of the rows, so you can check what a table holds before asking about it.' },
+    { a: 'you', t: 'Next', s: 'Query or Analyze', d: 'Ask a question about it in Query, or chart a trend or breakdown in Analyze.', go: 'query' },
+  ]},
+  knowledge: { title: 'Knowledge', foot: 'Text found in documents is treated as evidence, never as instructions. A citation proves the passage exists, not that the answer is right: check important answers against the source.', steps: [
+    { a: 'you', t: 'Upload', s: '.txt .md .pdf .docx', d: 'Upload a text, Markdown, PDF or Word file (up to 10 MB). PDFs need a text layer; scanned images are not read.' },
+    { a: 'system', t: 'Split', s: 'Text into passages', d: 'The text is extracted and split into passages of about 900 characters. Only the extracted text is kept, not the original file.' },
+    { a: 'system', t: 'Index', s: 'Search by wording', d: 'Passages are indexed for this workspace only. Search matches words, not meaning, so using the document\'s own terms works best.' },
+    { a: 'you', t: 'Ask', s: 'Question or chat', d: 'Knowledge answers one question. The Assistant is a chat that sends your last few messages along, so short follow-ups like "and after that?" work.' },
+    { a: 'system', t: 'Retrieve', s: 'Top matching passages', d: 'Up to 6 best-matching passages are selected.', x: 'If no passage matches, nothing is generated. Questions about numbers are pointed to Query.' },
+    { a: 'ai', t: 'Answer', s: 'Only from the passages', d: 'The AI model answers using only the selected passages, which are marked as evidence. Instructions written inside a document are ignored. It must cite each claim as [1], [2]…' },
+    { a: 'system', t: 'Check citations', s: 'Cited or withheld', d: 'Every citation must point to a passage that was actually provided.', x: 'An answer with no valid citation is withheld instead of shown.' },
+    { a: 'you', t: 'Read with sources', s: 'Open each [n]', d: 'Click a citation to read the exact passage it refers to.' },
+  ]},
+  analyze: { title: 'Analyze', foot: 'No AI is used in investigations. Facts are query results; hypotheses are rule-based and always labelled unverified.', steps: [
+    { a: 'you', t: 'Choose', s: 'Dataset, table, analysis', d: 'Pick a ready dataset and table, then trend (a measure over time), comparison (two periods) or breakdown (a measure by category), with the measure, aggregation and date or category column.' },
+    { a: 'system', t: 'Run fixed queries', s: 'Read-only templates', d: 'Built-in SQL templates run read-only with a 15-second limit.', x: 'Very large tables are refused rather than sampled silently.' },
+    { a: 'system', t: 'Facts', s: 'Numbers with their SQL', d: 'Each fact (change, peak, low, share, largest move) is computed from the results and keeps the SQL that produced it.' },
+    { a: 'system', t: 'Hypotheses', s: 'Labelled unverified', d: 'Rules suggest where a change may come from, for example one region driving most of it, and point to the facts they are based on. They are possibilities, not findings.' },
+    { a: 'system', t: 'Recommendations', s: 'And limitations', d: 'Suggested next checks are listed apart from facts, together with the report\'s limitations, such as column roles being guessed.' },
+    { a: 'you', t: 'Save and share', s: 'JSON or HTML', d: 'The report is kept in the workspace list. Download it as JSON or HTML.' },
+  ]},
+  investigate: { title: 'Investigate', foot: 'The model plans once and never sees what the tools return, so text inside your data cannot steer it. It cannot run SQL, shell commands or web requests.', steps: [
+    { a: 'you', t: 'Goal', s: 'Say what you need', d: 'Describe the outcome, for example "list my datasets and their quality" or "delete the old refund policy document". Needs the analyst role or higher.' },
+    { a: 'ai', t: 'Plan', s: 'Up to 6 steps', d: 'The AI model writes one plan using only the registered tools: list datasets, list documents, search documents, data quality, sync a dataset, delete a document.' },
+    { a: 'system', t: 'Validate plan', s: 'Tools, limits, ids', d: 'Every step is checked: the tool exists, its arguments are within limits, every id belongs to this workspace, and read steps come before changes.', x: 'A plan that fails the checks twice is not run.' },
+    { a: 'system', t: 'Run read steps', s: 'Immediately', d: 'Steps that only read run straight away and their results are shown to you, not to the model.' },
+    { a: 'person', t: 'Approve changes', s: 'Approve or reject', d: 'A step that changes data waits for someone with enough rights. The approval expires after 24 hours, and the approver\'s role is checked again when it runs.', x: 'Reject or cancel and the change never happens.' },
+    { a: 'system', t: 'Record', s: 'Run and audit trail', d: 'The run keeps every step, its arguments and its result. The action is written to the audit trail.' },
+  ]},
+  connect: { title: 'Connect', foot: 'A failed import never replaces good data: the previous version stays in use until a new one completes.', steps: [
+    { a: 'you', t: 'Bring data in', s: 'Upload or connect', d: 'Upload CSV, JSON, Excel, Parquet or SQLite, or save a PostgreSQL/MySQL connection (read-only; the password is encrypted and never shown again) and choose a table to import.' },
+    { a: 'worker', t: 'Import in background', s: 'Queued job', d: 'The import runs on the background worker, so large files do not block the app. Import runs show what was loaded, quarantined or rejected.' },
+    { a: 'system', t: 'New version', s: 'Swap only on success', d: 'Each import writes a new version next to the current one and switches over only when it succeeds.', x: 'If the import fails, the previous version stays in use.' },
+    { a: 'system', t: 'Quality check', s: 'ok / warning / error', d: 'Every column is profiled: missing values, duplicates, types and ranges. Findings are listed as ok, warning or error.' },
+    { a: 'system', t: 'Ready', s: 'Usable everywhere', d: 'A ready dataset can be explored, queried in Query, charted in Analyze and checked by the agent in Investigate.' },
+    { a: 'worker', t: 'Keep in sync', s: 'Manual or scheduled', d: 'Connection datasets can sync on demand or on a schedule, in full or only what changed.', x: 'A schedule that keeps failing is switched off and tells you why.' },
+  ]},
+  team: { title: 'Team', foot: 'Every workspace request goes through one permission check, and the audit trail records actions, never the text of your questions.', steps: [
+    { a: 'you', t: 'Create workspace', s: 'Personal or team', d: 'Everyone has a private personal workspace. Create a team workspace in Manage to share data and documents.' },
+    { a: 'you', t: 'Add members', s: 'By verified e-mail', d: 'Add people who already have a verified QuerySure account, as viewer, analyst or admin.' },
+    { a: 'system', t: 'Roles', s: 'viewer < analyst < admin < owner', d: 'Viewers read and ask. Analysts also upload data, run analyses and start agent investigations. Admins manage members and see audit and usage. Owners can delete the workspace.' },
+    { a: 'system', t: 'Permission check', s: 'On every request', d: 'Each request checks your role in that workspace.', x: 'People who are not members get "not found", so they cannot tell the workspace exists.' },
+    { a: 'system', t: 'Audit trail', s: 'Append-only', d: 'Uploads, deletions, approvals, member changes and reports are recorded with who and when. Records cannot be edited.' },
+    { a: 'system', t: 'AI usage', s: 'Calls and cost', d: 'Calls, failures, tokens, latency and estimated cost by feature, from the provider-call records.' },
+  ]},
+  evaluation: { title: 'Evaluation', foot: 'Results come from the repository\'s fixed benchmark. Self-check (oracle) modes are labelled as such and are not claims of live model accuracy.', steps: [
+    { a: 'system', t: 'Fixed questions', s: 'Known correct answers', d: 'A fixed set of questions with known correct results, written before measuring.' },
+    { a: 'system', t: 'Same pipeline', s: 'As in Query', d: 'Each question runs through the same grounding, planning, validation and execution steps users get.' },
+    { a: 'system', t: 'Compare results', s: 'Rows, not wording', d: 'The returned rows are compared with the expected rows, so a different but equivalent query still counts.' },
+    { a: 'system', t: 'Report', s: 'With uncertainty', d: 'Scores are reported with 95% confidence intervals, so small test sets are not over-claimed.' },
+  ]},
+};
+
+function renderFlow(host, key) {
+  const f = FLOWS[key]; if (!f) { host.replaceChildren(); return; }
+  const wrap = wsEl('div', 'flow');
+  const top = wsEl('div', 'flow-top');
+  top.appendChild(wsEl('p', 'flow-title', `How ${f.title} works`));
+  const legend = wsEl('ul', 'flow-legend');
+  [...new Set(f.steps.map(st => st.a))].forEach(a => { const li = wsEl('li', `flow-key actor-${a}`, FLOW_ACTORS[a]); legend.appendChild(li); });
+  top.appendChild(legend); wrap.appendChild(top);
+  const track = wsEl('ol', 'flow-track'), detail = wsEl('div', 'flow-detail');
+  detail.setAttribute('aria-live', 'polite');
+  const show = (i) => {
+    const st = f.steps[i];
+    track.querySelectorAll('.flow-step').forEach((b, j) => b.setAttribute('aria-pressed', String(i === j)));
+    const parts = [wsEl('p', `flow-detail-actor actor-${st.a}`, `Step ${String(i + 1).padStart(2, '0')} · ${FLOW_ACTORS[st.a]}`), wsEl('h4', 'flow-detail-title', st.t), wsEl('p', 'flow-detail-text', st.d)];
+    if (st.x) parts.push(wsEl('p', 'flow-detail-exit', st.x));
+    if (st.go) { const q = st.go === 'query', b = wsEl('button', 'page-btn page-btn-flow', `Open ${q ? 'Query' : WS_PAGES[st.go].name}`); b.type = 'button'; b.onclick = () => switchView(q ? 'ask' : 'workspace', q ? undefined : st.go); parts.push(b); }
+    detail.replaceChildren(...parts);
+  };
+  f.steps.forEach((st, i) => {
+    const li = wsEl('li', `flow-node actor-${st.a}${st.x ? ' has-exit' : ''}`);
+    const b = wsEl('button', 'flow-step'); b.type = 'button'; b.setAttribute('aria-pressed', 'false');
+    b.append(wsEl('span', 'flow-idx', String(i + 1).padStart(2, '0')), wsEl('span', 'flow-actor', FLOW_ACTORS[st.a]), wsEl('b', 'flow-name', st.t), wsEl('small', 'flow-short', st.s));
+    b.onclick = () => show(i);
+    li.appendChild(b);
+    if (st.x) li.appendChild(wsEl('span', 'flow-exit-tag', 'can stop here'));
+    track.appendChild(li);
+  });
+  wrap.append(track, detail, wsEl('p', 'flow-foot', f.foot));
+  host.replaceChildren(wrap);
+  show(0);
+}
+
+document.querySelectorAll('.page-btn-flow').forEach(btn => {
+  btn.onclick = () => {
+    const host = $(btn.getAttribute('aria-controls')), open = host.hidden;
+    if (open) renderFlow(host, btn.dataset.flow);
+    host.hidden = !open; btn.setAttribute('aria-expanded', String(open));
+    btn.textContent = open ? 'Hide how it works' : 'How it works';
+  };
+});
+setWsPage('home');
+
+// Upload straight from the workspace's Add data page; the file is catalogued in the active workspace.
+$('wsUploadBtn').onclick = () => $('wsUploadInput').click();
+$('wsSampleBtn').onclick = async () => { await connectSample(); if (dbConnected) switchView('workspace', 'explore'); };
+$('wsUploadInput').onchange = async (e) => {
+  const file = e.target.files[0]; e.target.value = '';
+  if (!file) return;
+  setWsMessage(`Uploading ${file.name}… this can take a minute.`);
+  $('wsUploadBtn').disabled = true;
+  try {
+    const ok = await uploadFile(file, { stay: true });
+    if (ok) { switchView('workspace', 'explore'); await loadWorkspaceView(); } else await loadWorkspaceView();
+    setWsMessage(ok ? `${file.name} is ready. Its schema is open below; ask about it in Query.` : `${file.name} could not be imported. The reason is shown at the top of the page.`, !ok);
+  } finally { $('wsUploadBtn').disabled = false; }
+};

@@ -101,8 +101,12 @@ def test_replacing_a_sessions_own_dataset_does_not_count_twice(client, limits):
     limits(max_datasets=1, max_sessions=50)
     headers, _ = register_headers(client)
     sid = connect_csv(client, headers)
-    r = _upload(client, headers, sid, data=b"x,y\n1,2\n", name="b.csv")   # re-upload INTO the same session
-    assert r.status_code == 202
+    # Sprint 3: a session no longer owns its dataset, so the first upload still counts until it is deleted; each stored
+    # dataset is counted exactly once.
+    assert _upload(client, headers, sid, data=b"x,y\n1,2\n", name="b.csv").status_code == 403
+    ds_id = client.get("/api/sessions", headers=headers).json()["sessions"][0]["dataset_id"]
+    assert client.delete(f"/api/datasets/{ds_id}", headers=headers).status_code == 200
+    assert _upload(client, headers, _session(client, headers).json()["session_id"], data=b"x,y\n1,2\n", name="b.csv").status_code == 202
 
 
 def test_storage_bytes_quota_on_upload(client, limits):
@@ -143,25 +147,32 @@ def test_sample_database_is_never_counted(client, limits, tmp_path, monkeypatch)
     assert connect_csv(client, headers)                           # still room for one real upload
 
 
-def test_switching_to_sample_or_flushing_releases_the_quota(client, limits):
+def test_flushing_keeps_the_dataset_counted_and_deleting_it_releases_the_quota(client, limits):
     limits(max_datasets=1, max_sessions=50)
     headers, email = register_headers(client)
     sid = connect_csv(client, headers)
     uid = _user_rows(email)[0].user_id
     assert quotas.usage_for_user(SessionLocal(), uid)["datasets"] == 1
+    ds_id = client.get("/api/sessions", headers=headers).json()["sessions"][0]["dataset_id"]
     assert client.post("/api/session/flush", headers=headers, json={"session_id": sid}).status_code == 200
+    assert quotas.usage_for_user(SessionLocal(), uid)["datasets"] == 1      # Sprint 3: the dataset outlives its session link
+    assert client.delete(f"/api/datasets/{ds_id}", headers=headers).status_code == 200
     assert quotas.usage_for_user(SessionLocal(), uid) == {"sessions": 1, "datasets": 0, "dataset_bytes": 0}
 
 
 def test_bytes_recorded_at_ingestion(client):
     headers, email = register_headers(client)
     connect_csv(client, headers)
+    from db import Dataset
     row = [r for r in _user_rows(email) if r.db_path][0]
-    assert row.dataset_bytes and row.dataset_bytes == os.path.getsize(row.db_path)
+    assert row.dataset_bytes is None            # Sprint 3: workspace datasets are counted from the catalog, once
+    with SessionLocal() as db:
+        ds = db.get(Dataset, row.dataset_id)
+        assert ds.bytes and ds.bytes > os.path.getsize(row.db_path)    # curated database + the retained raw upload
 
 
 # ------------------------------------------------------------------ escape hatch + plans
-def test_user_can_free_quota_by_deleting_a_session(client, limits):
+def test_user_can_free_quota_by_deleting_a_dataset(client, limits):
     limits(max_datasets=1, max_sessions=50)
     headers, email = register_headers(client)
     sid = connect_csv(client, headers)
@@ -169,7 +180,10 @@ def test_user_can_free_quota_by_deleting_a_session(client, limits):
     assert listing["quota"]["used"]["datasets"] == 1 and listing["quota"]["limits"]["max_datasets"] == 1
     assert any(s["session_id"] == sid and s["has_dataset"] for s in listing["sessions"])
     assert _upload(client, headers, _session(client, headers).json()["session_id"]).status_code == 403
-    assert client.delete(f"/api/session/{sid}", headers=headers).status_code == 200
+    assert client.delete(f"/api/session/{sid}", headers=headers).status_code == 200      # a session no longer owns the file
+    assert _upload(client, headers, _session(client, headers).json()["session_id"]).status_code == 403
+    ds_id = next(s["dataset_id"] for s in listing["sessions"] if s["session_id"] == sid)
+    assert client.delete(f"/api/datasets/{ds_id}", headers=headers).status_code == 200
     assert _upload(client, headers, _session(client, headers).json()["session_id"]).status_code == 202
 
 
