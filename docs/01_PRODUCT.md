@@ -65,7 +65,7 @@ QuerySure gives the language model **one job: writing SQL**. Grounding, planning
 | In scope (v1.0.7) | Out of scope |
 |---|---|
 | File-based datasets converted to SQLite | Live connections to customer databases |
-| One user per account | Organisations, seats, shared workspaces |
+| One user per account; team workspaces with roles, a shared dataset catalog and an audit trail (Sprint 1) | Organisations, seats, team billing; querying another member's dataset |
 | Free plan with 10 questions/day; Pro tier defined at $5/month for 50/day | A connected payment provider (only a provider-neutral webhook engine and a generic reference adapter exist; see [BILLING.md](BILLING.md)) |
 | Answering or declining a question | Clarifying questions for ambiguous asks |
 | Background report generation per question | Report download from the main UI |

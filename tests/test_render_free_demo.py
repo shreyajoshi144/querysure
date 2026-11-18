@@ -360,7 +360,8 @@ def test_a_late_success_never_overwrites_a_reported_failure(client, monkeypatch)
 def test_a_late_upload_does_not_switch_the_dataset_or_leave_objects(client, s3, no_worker, monkeypatch):
     headers, _ = register_headers(client, "demo-race-up")
     sid = _session(client, headers)
-    real_ingest = jobs.ingest_to_sqlite
+    import ingest
+    real_ingest = ingest.build_curated
 
     def ingest_then_get_interrupted(*args, **kwargs):
         out = real_ingest(*args, **kwargs)
@@ -369,7 +370,7 @@ def test_a_late_upload_does_not_switch_the_dataset_or_leave_objects(client, s3, 
         _interrupt(job.id)
         return out
 
-    monkeypatch.setattr(jobs, "ingest_to_sqlite", ingest_then_get_interrupted)
+    monkeypatch.setattr(ingest, "build_curated", ingest_then_get_interrupted)
     r = _upload(client, headers, sid)
     body = client.get(f"/api/jobs/{r.json()['job_id']}", headers=headers).json()
     assert body["status"] == "failed" and body["error_code"] == "JOB_INTERRUPTED"

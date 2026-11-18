@@ -196,6 +196,88 @@ Defects found during the final review and fixed before packaging. These are not 
 
 **Verification in this review:** 1,171 passed, 0 failed, 14 skipped (Python 3.12, SQLite); Ruff clean; `pip-audit` clean; `docker compose config` valid. PostgreSQL-only pytest tests were skipped; the running Compose stack was checked by hand (R-08). Details: [03_EVALUATION.md](03_EVALUATION.md).
 
+## AI Operations Platform — Sprint 0 (baseline) and Sprint 1 (workspaces)
+
+The first two sprints of the evolution towards an AI operations platform. Sprint 0 measures the starting point; Sprint 1
+adds the tenancy layer every later capability depends on.
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S0-01 | Baseline | Tag `v1-querysure`; tests and offline evaluations recorded on a clean checkout of the tag | [baseline/README.md](baseline/README.md) | Done |
+| S0-02 | Capability map | Every item of both target scopes classified working / partial / missing / broken, citing the code | [CAPABILITY_MAP.md](CAPABILITY_MAP.md) | Done |
+| S0-03 | Cross-user isolation regression | Another user cannot reach a user's sessions, dataset preview, retrieval, execution, history, jobs, reports or answer trace | `test_s1_workspaces.py::test_cross_user_isolation_of_sessions_history_reports_jobs_and_retrieval` | Done |
+| S1-01 | Workspaces and roles | Personal workspace per user; team workspaces with owner / admin / analyst / viewer; one authorization check; 404 for non-members, 403 for low roles | `workspaces.py`, `workspace_api.py`; role-matrix tests | Done |
+| S1-02 | Dataset catalog | Uploads catalogued in the chosen workspace (analyst+); entry removed with its file; delete by creator or admin, storage first; datasets follow their creator when membership ends | `datasets` table; `test_s1_workspaces.py` | Done. Querying another member's file is **not** included: storage stays owner-scoped |
+| S1-03 | Audit trail | Append-only; login, upload, query, report, dataset delete, workspace and member changes; no SQL, questions, data, e-mail or storage refs; failure never fails the request | `audit.py`; audit tests | Done |
+| S1-04 | Migration | Backfill of personal workspaces and catalog; `alembic check` clean; reversible; on SQLite and PostgreSQL 16 | `b8d2e4f6a1c3`; `test_s1_migration.py`; manual run on PostgreSQL 16 and from the Docker image | Done |
+| S1-05 | UI | Workspace view: switcher, catalog, members, audit trail with paging, create / rename / delete / leave; hostile names render as text | `static/js/app.js`; `test_s1_workspace_ui.py`; checked in the browser on the running app | Done |
+| S1-06 | Account privacy | Export lists memberships and catalogued datasets; deletion removes owned team workspaces and re-homes other members' datasets | `account_service.py`; tests | Done |
+
+**Verification (Sprint 1):** Ruff clean. SQLite: 1,266 passed, 8 skipped, 2 failed — the 2 are the browser e2e test, whose bundled Linux Chromium cannot start on macOS (`spawn ENOEXEC`); the same test passes (both asset variants) when pointed at a local Chrome. PostgreSQL 16: 1,262 passed, 13 skipped, 0 failed (e2e deselected). Migration upgrade, `alembic check`, downgrade and re-upgrade verified on SQLite, PostgreSQL and from the Docker image. Docker smoke test: healthy, UID 10001. Live app: 24 API checks across a server restart, plus the Workspace UI exercised in the browser as owner and viewer.
+
+## AI Operations Platform — Sprint 2 (AI provider layer)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S2-01 | Extract the provider layer | Transports, fallback chain, usage accounting in `ai/`; no behaviour change | 375 existing provider/fallback/injection/accounting/evaluation tests pass unmodified; offline multi-format (tuned, held-out, negatives) output identical to the Sprint 0 baseline; oracle benchmark identical except timing | Done |
+| S2-02 | Per-task routing | `sql_generation` and `sql_repair` routable via `AI_TASK_ROUTES`; bad config stops startup; repairs run as their own task | `ai/router.py`; `test_s2_ai_layer.py`; live app run with `sql_generation=openai` made no Groq call | Done |
+| S2-03 | Gemini and xAI | Documented OpenAI-compatible endpoints, strict JSON Schema, no default models, capabilities listed per provider | `ai/providers.py`; stubbed-client tests | Done in code; **not run against the live Gemini or xAI APIs** (no keys) |
+| S2-04 | AI call trace | One `ai_calls` row per attempt incl. failures, retries and skips; trace id on the response and the invocation summary; owner-only read; no prompt/SQL/data/keys; write failure never breaks a request; export and deletion | `ai/trace.py`, migration `c3f5a7b9d1e2`, `GET /api/ai/traces/{id}`; live app run through real SDKs against a local mock (4 Groq 500s with retries, then OpenAI) | Done |
+| S2-05 | Side-by-side model evaluation | Same cases, pipeline and scoring per `provider[:model]`; accuracy over answered runs, p50 latency, tokens, cost | `evaluation.multiformat --compare` | Done in code; **no live comparison numbers yet** (needs provider credits) |
+| S2-06 | UI | Generate SQL inspector lists every model call behind an answer | `static/js/app.js`; checked in the browser | Done |
+
+## AI Operations Platform — Sprint 3 (connectors, layered ingestion, workspace-owned datasets)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S3-01 | Connector framework + file connectors | Interface, registry, CSV / Excel / JSON / Parquet / SQLite; UI lists only the registry | `connectors/`; `test_s3_ingestion.py` | Done (file sources, full refresh only) |
+| S3-02 | Layered runs | Raw, validated, curated; run counts; one active run per dataset (database-enforced); atomic swap; identical file skipped; failed or interrupted run keeps the previous version | `ingest.py`, migration `d4a6b8c0e2f4` | Done |
+| S3-03 | Validation, quarantine, lineage, schema changes | Reason codes, hidden `_qs_*` tables blocked at schema, validator and authorizer, schema diff audited | tests | Done |
+| S3-04 | Workspace-owned datasets | Viewer opens and queries, analyst re-imports, revocation immediate, stale sessions reopen, quota once per dataset | `workspaces.session_db_path`, `dataset_api.py` | Done. Behaviour change: dataset lifetime is independent of sessions |
+| S3-05 | UI | Open, Re-import, Runs, quarantine sample | `static/js/app.js` | Done |
+| S3-06 | Encrypted connection credentials | | | **Not in this sprint** (file connectors need none); Sprint 4 |
+
+## AI Operations Platform — Sprint 4 (database connectors, incremental sync)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S4-01 | Encrypted connections | Create, test, edit, disable, delete; password encrypted, bound to its connection, never in responses, logs or audit; redirect of a stored secret blocked; workspace roles | `secrets_store.py`, `connection_api.py`; `test_s4_connections.py` | Done |
+| S4-02 | PostgreSQL and MySQL connectors | Schema discovery, read-only keyset batches, error codes, network guard | `connectors/`; tests against real PostgreSQL 16 and MySQL 8.4 | Done |
+| S4-03 | Batch import and backfill | Bounded memory, progress, resume after a transient failure, time limit, unstorable values quarantined | `ingest_db.py` | Done |
+| S4-04 | Incremental sync | Watermark + overlap, primary-key upserts, idempotent re-run, checkpoint with the swap, fallback with a recorded reason | tests | Done. Deletions not detected; no scheduler yet |
+| S4-05 | Reliability | One active run per dataset, lost job → interrupted, failed run keeps the previous version and checkpoint | tests | Done |
+| S4-06 | UI | Connections, import, sync | `static/js/app.js` | Done |
+
+## AI Operations Platform — Sprint 5 (REST, S3, scheduler)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S5-01 | REST connector | Config validation, five pagination styles, auth methods, retries with `Retry-After`, redirects and oversize or non-JSON answers refused, validated-address connection, incremental by `updated_since` | `connectors/rest.py`, `httpclient.py`; `test_s5_sources.py` against a real local HTTP server | Done. No OAuth |
+| S5-02 | S3 connector | Explicit credentials only, endpoint guard, caps, new / changed / removed object detection, unchanged run skipped, schema-change fallback | `connectors/s3_source.py`; moto tests; live run against a local S3-compatible server | Done |
+| S5-03 | Shared pipeline | One swap / checkpoint / quarantine path for database, REST and S3 sources | `ingest_db.publish`, `ingest_records.py` | Done |
+| S5-04 | Scheduler | Atomic claim, no doubled run, one catch-up run after downtime, self-disable with reason, heartbeat, compose service | `scheduler.py`; tests incl. a two-thread race | Done. Needs an always-on process |
+| S5-05 | Cleanup | Workspace deletion removes connections and secrets; dataset deletion removes checkpoint and schedule | tests | Done |
+| S5-06 | UI | REST / S3 connection forms, resources import, schedule control | `static/js/app.js` | Done |
+
+## AI Operations Platform — Sprint 6 (data quality)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S6-01 | Profiling | Per-table and per-column counts after every successful import; no text values stored | `quality.py`; `tests/test_s6_quality.py` | Done |
+| S6-02 | Findings | Drop, surge, outlier, empty column, null spike, type / schema change, numeric shift, reject and duplicate rates, configurable | tests on numbers and through the API | Done |
+| S6-03 | Safety | Report failure never fails an import; viewers read, non-members get 404; removed with the dataset | tests | Done |
+| S6-04 | UI | Status on the dataset row; findings in the Runs panel | `static/js/app.js` | Done |
+
+## AI Operations Platform — Sprint 7 (knowledge hub)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S7-01 | Ingestion | txt / md / pdf / docx, caps, duplicate refusal, text-only storage | `knowledge.py`; tests | Done |
+| S7-02 | Retrieval | Reuses `rank_texts`; recall measured; nothing returned when nothing is relevant | `test_retrieval_recall_on_a_fixed_question_set` | Done (small fixture) |
+| S7-03 | Cited answers | Untrusted-passage prompt, citation validation, withheld ungrounded answers, shared budget and trace | `knowledge_api.py`; tests | Done |
+| S7-04 | Isolation and deletion | Roles, 404 for non-members, delete removes passages, workspace / account cleanup | tests | Done |
+| S7-05 | UI | Knowledge card: upload, list, delete, ask, search | `static/js/app.js` | Done |
+
 ## Open backlog
 
 | ID | Item | Type |
@@ -207,3 +289,66 @@ Defects found during the final review and fixed before packaging. These are not 
 | B-05 | Exercise real Sentry, alert webhook and S3 recovery; measure capacity on multi-core hardware | Not done |
 | B-06 | Clarifying questions for ambiguous asks; two-table independent verification | Not done |
 | B-07 | Token storage hardening (HttpOnly cookie with CSRF protection) and `trusted_schema=OFF` for uploaded SQLite | Not done |
+
+## AI Operations Platform — Sprint 8 (assistant conversations)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S8-01 | Persisted private chats | Create / list / read / rename / delete; migration `c9e1a3b5d7f2` | `conversation_api.py`; `tests/test_s8_assistant.py` | Done |
+| S8-02 | Follow-up context | Last turns in a `<conversation>` block; short follow-ups retrieved with the previous question | `assistant.py`; tests | Done |
+| S8-03 | Same pipeline, one model call path | `knowledge_api.generate_answer` shared with Sprint 7; budget, keys, provider chain, trace unchanged | tests | Done |
+| S8-04 | Honest limits | No passage: no model call; data questions redirected to Ask-data; uncited answers withheld | tests | Done |
+| S8-05 | Privacy and cleanup | Owner-only (404 otherwise), membership re-checked, workspace / account deletion removes chats | tests | Done |
+| S8-06 | UI | Assistant card: history, new chat, send, cited sources, delete | `static/js/app.js` | Done |
+
+## AI Operations Platform — Sprint 9 (controlled agent)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S9-01 | Tool registry and plan validation | Six typed tools; unknown tools, bad arguments, foreign ids, read-after-write and over-long plans rejected | `agent.py`; `test_invalid_plans_are_rejected_not_repaired` | Done |
+| S9-02 | Approval gates | Write steps wait; approval runs the stored arguments once; reject skips the rest; approvals expire | tests | Done |
+| S9-03 | Injection resistance | One planning call; tool output never returned to the model; names fenced | `test_injection_in_documents_and_names_cannot_add_steps` | Done |
+| S9-04 | Roles and privacy | analyst+ starts; tool role approves; runs visible to creator and admin+ only | tests | Done |
+| S9-05 | Persistence, audit, cleanup | Runs/steps stored (migration `d1f3b5a7c9e4`), writes audited, workspace/user deletion removes them | tests | Done |
+| S9-06 | UI | Agent card: goal, runs, step results, approve / reject / cancel | `static/js/app.js` | Done |
+
+## AI Operations Platform — Sprint 10 (investigations and structured reports)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S10-01 | Computed facts with SQL | Trend, comparison, breakdown; each fact keeps its SQL; deterministic | `investigation.py`; `test_trend_separates_facts_from_hypotheses`, `test_results_are_deterministic_for_the_same_inputs` | Done |
+| S10-02 | Facts vs hypotheses vs recommendations vs limitations | Separate sections; hypotheses cite fact ids and are labelled unverified | tests | Done |
+| S10-03 | Safe parameters | Roles checked against the schema; injection-like identifiers refused; nothing stored on refusal | `test_bad_parameters_are_refused_with_a_code` | Done |
+| S10-04 | Untrusted documents | Excerpts shown as context only, escaped in HTML, never change a figure | `test_documents_are_untrusted_context_and_never_change_the_figures` | Done |
+| S10-05 | Exports and access | JSON/HTML via existing report storage; creator-only download; viewer read, analyst run, admin/creator delete; cleanup with dataset | tests | Done |
+| S10-06 | UI | Investigations card: run, list, read, download, delete | `static/js/app.js` | Done |
+
+## AI Operations Platform — Sprint 11 (evaluation and governance)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S11-01 | Retrieval evaluation and vector-index decision | Fixed corpus, class-level recall/MRR/false positives, thresholds fixed beforehand, intervals reported | `evaluation/platform/rag.py`; `docs/baseline/platform_eval.txt` | Done (100 questions; verdict: not justified, paraphrase recall@3 0.72) |
+| S11-02 | Plan / tool-selection evaluation | Oracle, replay and live modes; overreach and id accuracy scored; live refuses without `--yes` | `agent_eval.py`; tests | Done (live not run: no funded key) |
+| S11-03 | Safety-adversarial suite | 36 cases against real controls; a broken control makes cases fail | `safety.py`; `test_the_safety_suite_detects_a_broken_control` | Done |
+| S11-04 | AI usage governance report | Per task / provider / day from `ai_calls`, admin-only, workspace-scoped, no prompt text | `governance.py`; `test_ai_usage_report_aggregates_real_calls_and_is_admin_only` | Done |
+| S11-05 | UI | Admin-only AI usage card | `static/js/app.js` | Done |
+
+## AI Operations Platform — Sprint 12 (dashboard, hardening and launch)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S12-01 | Workspace overview | Real counts, role-aware, scoped to the workspace; UI card | `overview.py`; `test_overview_summarises_the_workspace_and_respects_roles` | Done |
+| S12-02 | Authentication matrix | Every `/api` route rejects anonymous calls unless on a reviewed list | `test_every_non_public_api_route_rejects_anonymous_requests` | Done |
+| S12-03 | Measured latency and limits | Heavy paths timed; unsafe defaults replaced by enforced limits | `docs/baseline/performance.txt`; `test_index_and_table_size_limits_protect_latency` | Done |
+| S12-04 | Launch checklist and CI gate | Documented gates and smoke test; safety suite in CI | `docs/LAUNCH_CHECKLIST.md`; `.github/workflows/ci.yml` | Done (checklist not yet executed on a real deployment) |
+
+## AI Operations Platform — Sprint 13 (retrieval scale, live-quality tooling, deployment rehearsal)
+
+| ID | Item | Acceptance criteria | Evidence | Status |
+|---|---|---|---|---|
+| S13-01 | Cached inverted index | Same scores as scoring every passage; follows uploads and deletes; never crosses workspaces; bounded memory | `tests/test_s13_retrieval_index.py`; `docs/baseline/performance.txt` | Done |
+| S13-02 | Raised, measured cap | Cap raised only to what measurements support; memory stated; small plans lowered | 25,000 default; `render.yaml` 5,000 | Done |
+| S13-03 | Answer-quality suite | Retrieval -> real prompt -> real validator; oracle / replay / live; off-topic hallucination counted | `evaluation/platform/answers.py`; `test_answer_suite_scores_replayed_replies_honestly` | Done (live run not executed) |
+| S13-04 | Live quality run | One command, explicit confirmation, Groq only, replies recorded | `scripts/live_quality.sh` | Tooling done; **no live numbers** (no funded key available here) |
+| S13-05 | Deployment rehearsal | Production-mode stack, smoke test, backup, verified restore, restart; exits non-zero on failure | `scripts/launch_rehearsal.sh`, `scripts/launch_smoke.py` | Done on one machine; not a cloud deployment |
+| S13-06 | Documentation for outside readers | Reviewer guide, measured results, limits | `README.md`, `docs/LAUNCH_CHECKLIST.md` | Done |

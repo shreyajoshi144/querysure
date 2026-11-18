@@ -146,6 +146,51 @@ def _cosine(v1: dict, v2: dict) -> float:
     return dot / (n1 * n2 + 1e-9)
 
 
+_STOP = frozenset("a an and are as at be by for from how i in is it of on or that the this to was what when where which who why with do does did "
+                 "can could should would about into than then there their they we you your our not no".split())
+
+
+class TextIndex:
+    """TF-IDF index over a list of texts with an inverted index, so a query only touches the texts that share a term with it.
+    Scores are identical to scoring every text (same tokenizer, stemmer, weights and cosine); only the work done differs."""
+
+    def __init__(self, texts: List[str]):
+        vecs, self.idf = _build_tfidf(texts)
+        self.size = len(texts)
+        self.norms = [math.sqrt(sum(x * x for x in v.values())) for v in vecs]
+        self.postings: Dict[str, List[tuple]] = {}
+        for i, v in enumerate(vecs):
+            for t, w in v.items():
+                self.postings.setdefault(t, []).append((i, w))
+
+    def rank(self, query: str, top_k: int = 5, min_score: float = 0.0) -> List[tuple]:
+        """[(index, cosine score)] best first. Stop words never count, so a text must share a real term."""
+        if not self.size or not query:
+            return []
+        terms = [t for t in _tokenize(query) if t not in _STOP and t in self.idf]
+        if not terms:
+            return []
+        qv = {t: (c / len(terms)) * self.idf[t] for t, c in Counter(terms).items()}
+        qn = math.sqrt(sum(x * x for x in qv.values()))
+        dots: Dict[int, float] = {}
+        for t, qw in qv.items():
+            for i, w in self.postings.get(t, ()):
+                dots[i] = dots.get(i, 0.0) + qw * w
+        scored = []
+        for i, dot in dots.items():
+            s = dot / (qn * self.norms[i] + 1e-9)
+            if s >= min_score and s > 0:
+                scored.append((i, s))
+        scored.sort(key=lambda x: (-x[1], x[0]))
+        return scored[:top_k]
+
+
+def rank_texts(query: str, texts: List[str], top_k: int = 5, min_score: float = 0.0) -> List[tuple]:
+    """[(index, cosine score)] of ``texts`` best matching ``query``, best first. One TF-IDF/cosine implementation shared with the
+    schema retrieval above (the same tokenizer, stemmer and weights)."""
+    return TextIndex(texts).rank(query, top_k, min_score) if texts and query else []
+
+
 def _doc_type_priority(doc_type: str) -> int:
     return {"table": 3, "column": 2, "relationship": 2, "metric": 2}.get(doc_type, 1)
 

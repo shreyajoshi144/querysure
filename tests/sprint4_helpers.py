@@ -34,7 +34,7 @@ def log_lines():
 
     def read():
         # The httpx logger is the TEST CLIENT logging its own outgoing request URL; it is not server output.
-        kept = [line for line in buf.getvalue().splitlines() if line.strip() and '"logger":"httpx"' not in line]
+        kept = [line for line in buf.getvalue().splitlines() if line.strip() and '"logger":"httpx' not in line]
         return [json.loads(line) for line in kept], "\n".join(kept)
     yield read
     root.removeHandler(handler)

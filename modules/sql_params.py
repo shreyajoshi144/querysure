@@ -21,7 +21,6 @@ def parameterize_literals(sql: str) -> Tuple[str, List[str]]:
     except Exception:
         return sql, []
     out, params, last = [], [], 0
-    in_list_depth = 0          # >0 while inside IN ( ... ) with no nested SELECT
     paren_stack = []
     for i, t in enumerate(tokens):
         prev = tokens[i - 1] if i else None

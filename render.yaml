@@ -87,10 +87,15 @@ services:
       # restart loses them and they are reported as failed (JOB_INTERRUPTED) so the user can retry. See docs/OPERATIONS.md.
       - key: WEB_CONCURRENCY
         value: "1"
+      # Sprint 13: a cached search index for 25,000 passages needs about 285 MB; the free plan has 512 MB in total
+      - key: KNOWLEDGE_SEARCH_MAX_CHUNKS
+        value: "5000"
       - key: MAX_UPLOAD_MB
         value: "10"
       - key: MAX_UPLOAD_XLSX_MB
         value: "2"            # Excel parsing is slow on 0.1 CPU: 2 MB took ~11 minutes in a 0.1-CPU test container
+      - key: MAX_UPLOAD_PARQUET_MB
+        value: "4"            # a Parquet file decodes to several times its size: 5.8 MB (330k rows) peaked at 223 MB in-process
       - key: JOB_EXECUTION
         value: "auto"
       - key: THREADPOOL_MAX_WORKERS
@@ -151,6 +156,18 @@ services:
         sync: false          # optional fallback provider
       - key: ANTHROPIC_API_KEY
         sync: false          # optional fallback provider
+      - key: GEMINI_API_KEY
+        sync: false          # optional; also needs GEMINI_MODEL (no default model)
+      - key: GEMINI_MODEL
+        sync: false
+      - key: XAI_API_KEY
+        sync: false          # optional; also needs XAI_MODEL (no default model)
+      - key: XAI_MODEL
+        sync: false
+      - key: CONNECTIONS_ENCRYPTION_KEY
+        sync: false          # required to use saved database connections; generate with cryptography's Fernet.generate_key()
+      - key: AI_TASK_ROUTES
+        sync: false          # optional per-task routing, e.g. sql_repair=openai,groq (docs/ENVIRONMENT.md)
 
   # Background workers are NOT available on Render's free plan (free instance types exist only for web services, Postgres
   # and Key Value), so a `plan: free` worker makes the blueprint invalid. Without this worker nothing sends the

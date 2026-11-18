@@ -161,6 +161,7 @@ created them, suspend or delete them in the dashboard. `render.yaml` sets the we
 | `WEB_CONCURRENCY` | `1` | One uvicorn process. The free instance has 512 MB RAM and 0.1 CPU; each idle process holds about 135 MB, so a second one only takes memory away from uploads. |
 | `MAX_UPLOAD_MB` | `10` | Largest upload, any format. |
 | `MAX_UPLOAD_XLSX_MB` | `2` | Excel only: parsing a workbook is CPU-heavy (see the timings below). |
+| `MAX_UPLOAD_PARQUET_MB` | `4` | Parquet only: it decodes to several times its size (a 5.8 MB file peaked at 223 MB in the import process, measured on a laptop, not under the 512 MB / 0.1 CPU limits). |
 | `JOB_EXECUTION` | `auto` | No worker heartbeat -> uploads and reports run in the web process right after the `202` response. |
 | `AUTH_EMAIL_DELIVERY` | (unset = `auto`) | Same for verification / reset e-mails (HTTPS e-mail API, step 3). |
 

@@ -1,27 +1,42 @@
 # QuerySure
 
-**Ask a question about your data in plain English. Get the answer, the SQL behind it, and a record of every check it passed or failed.**
+**A self-hostable AI operations platform for company data: connect databases, files and documents, then ask questions, investigate changes and automate checks, with every answer showing its evidence and every risky action waiting for a person's approval.**
 
 ![QuerySure workflow view](docs/assets/02-workflow.jpg)
 <sub>Local run. The SQL in this screenshot came from the stub model used by the test suite; every other stage ran for real.</sub>
 
-## Why it exists
+## For reviewers: what to look at in five minutes
 
-"Chat with your data" tools fail quietly. If a filter value is spelled differently from the data (`'Completed'` vs `'completed'`), you get an empty table that looks like "no sales". If a date filter is dropped, you get a real number for the wrong period. The reply sounds just as confident either way, and someone who doesn't write SQL can't tell.
+| If you care about | Look at | Evidence |
+|---|---|---|
+| **Product thinking** | [Product](docs/01_PRODUCT.md), [Capability map](docs/CAPABILITY_MAP.md) | Every capability is classified Working / Partial / Missing against the code, not the plan |
+| **Backend engineering** | `api.py` plus 8 `*_api.py` modules, `workspaces.py`, `ingest.py`, `agent.py`, `investigation.py` | FastAPI, SQLAlchemy 2, 25 Alembic migrations, workspace RBAC (viewer / analyst / admin / owner), append-only audit log |
+| **AI engineering** | `modules/sql_generator.py`, `knowledge.py`, `agent.py`, `ai/` | One job for the model per feature; everything around it is deterministic and tested. Multi-provider routing, budgets reserved before each call, full call trace |
+| **AI safety** | `evaluation/platform/safety.py`, [Evaluation](docs/03_EVALUATION.md) | 36 adversarial cases (prompt injection through documents, forged plans, cross-tenant ids, SQL escapes) against the real controls: 36 / 36 blocked, run in CI |
+| **Measurement honesty** | `docs/baseline/`, `evaluation/` | Retrieval recall with confidence intervals, a vector-database decision rule fixed *before* measuring, and every unmeasured thing listed as unmeasured |
+| **Operations** | [Launch checklist](docs/LAUNCH_CHECKLIST.md), `scripts/launch_rehearsal.sh` | A production-mode rehearsal (real image, PostgreSQL, Redis, S3-compatible store, migrations on boot, backup, restore, restart) that exits non-zero on failure |
 
-QuerySure gives the language model **one job: writing SQL**. Everything around that step is deterministic, tested Python. It grounds the question in real data values, plans the query, validates the SQL, runs it in a read-only sandbox and checks the result independently. If an answer can't be confirmed, it is labelled **"not independently verified"** instead of being presented as correct.
+## What it does
 
-## Features
+- **Ask your data (Text-to-SQL):** upload CSV, JSON, Excel or SQLite, or connect PostgreSQL, MySQL, a REST API or an S3 bucket. The model only writes SQL; grounding, planning, validation, a read-only sandbox and an independent recalculation are deterministic code. Answers it cannot confirm are labelled "not independently verified".
+- **Workspaces and datasets:** teams share versioned datasets with role-based access, scheduled syncs, import history, and a data-quality report (profile, anomalies, warnings) after every import.
+- **Knowledge hub and Assistant:** upload `.txt`, `.md`, `.pdf` or `.docx`; ask in a private conversation and get answers that cite numbered passages. An answer that cites nothing valid is withheld. Retrieved text is treated as untrusted input.
+- **Investigations:** trend, comparison and breakdown analyses that run real queries, keep the SQL behind every fact, label hypotheses as unverified, and export to JSON or HTML.
+- **Controlled agent:** the model proposes a validated plan over six tools; reads run at once, writes (sync a dataset, delete a document) wait for an authorised person's approval and are re-checked at execution. The model never sees tool output.
+- **Governance:** AI usage by task, provider and user from the call trace; audit log; per-user and global AI budgets and a kill switch; a workspace overview of what needs attention.
 
-- **Bring your own data:** upload CSV, JSON, Excel (XLSX/XLSM) or SQLite, or use the bundled 5-table retail sample. Uploads are converted to SQLite in the background, with size, row, column and zip-bomb limits.
-- **Verifiable answers:** every answer shows its SQL, validation findings, a reliability score, a step-by-step trace and, for single-table questions, an independent recalculation.
-- **Safe by construction:** only one read-only `SELECT`/`WITH` statement can run, enforced at four independent layers.
-- **Multi-provider AI with cost control:** Groq → OpenAI → Anthropic fallback, with per-user and global daily budgets reserved before every call and a kill switch.
-- **Accounts:** e-mail verification, password reset, optional Google sign-in, revocable sessions, data export and account deletion.
-- **Query history:** search saved answers and their details (question, SQL, saved result, verification); entries are read-only snapshots, and deleting one asks for confirmation.
-- **Clean dataset switching:** connecting a new file or the sample clears the previous question, answer, SQL, results and verification; a failed upload never replaces the active dataset.
-- **Operations:** PII-safe JSON logs, metrics, SLOs, alerts, health and readiness probes, and an aggregate-only admin dashboard.
-- **Evaluation harness:** a 62-question benchmark that grades by result set and detects hallucinated tables and columns.
+## Measured results (offline unless stated; regenerate with the commands in [evaluation/README.md](evaluation/README.md))
+
+| Area | Result | Notes |
+|---|---|---|
+| Knowledge retrieval, keyword questions (n=24) | recall@3 **1.00** (95% CI 0.86-1.00) | TF-IDF; no vector database |
+| Knowledge retrieval, paraphrased questions (n=60) | recall@3 **0.72** (CI 0.59-0.82) | Misses are listed in `docs/baseline/platform_eval.txt` |
+| Off-topic questions that wrongly retrieve text (n=16) | **12.5%** | Cap is 25%; those cases are answered "insufficient" or withheld, never invented |
+| Vector index decision | **not justified** | The rule was fixed before the numbers; it would flip if recall fell below the thresholds |
+| Safety-adversarial suite | **36 / 36** blocked | Six control families; a deliberately broken control is shown to fail the suite |
+| Search latency, 25,000 passages | **under 2 ms** per question after a one-off ~3 s index build | Sprint 13 inverted index; was 4.8 s *per question* at 30,000 |
+| Production-mode rehearsal | see [LAUNCH_CHECKLIST](docs/LAUNCH_CHECKLIST.md) section 7 | Real stack on one machine; not a cloud deployment |
+| Live model quality (SQL, plans, answers) | **see [Limitations](#limitations)** | Needs a funded key; `scripts/live_quality.sh` produces the numbers |
 
 ## How a question becomes an answer
 
@@ -44,32 +59,38 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    U["Browser<br/>vanilla JS, strict CSP"] --> API["FastAPI service<br/>auth, rate limits,<br/>NL-to-SQL pipeline"]
-    API --> PG[("PostgreSQL<br/>users, history,<br/>usage, AI ledger")]
-    API --> RD[("Redis<br/>budgets, rate limits,<br/>job queue")]
-    API --> S3[("S3-compatible storage<br/>one SQLite file<br/>per dataset")]
-    API --> LLM["LLM providers<br/>Groq, OpenAI, Anthropic"]
-    RD --> W["RQ worker<br/>ingestion, reports, e-mail"]
+    U["Browser<br/>vanilla JS, strict CSP"] --> API["FastAPI service<br/>auth, RBAC, rate limits"]
+    API --> SQLP["Text-to-SQL pipeline"]
+    API --> KB["Knowledge hub +<br/>Assistant"]
+    API --> AG["Agent +<br/>Investigations"]
+    SQLP & KB & AG --> AI["AI layer<br/>router, budgets, trace<br/>Groq, OpenAI, Anthropic"]
+    API --> PG[("PostgreSQL<br/>workspaces, datasets, audit,<br/>passages, runs, AI trace")]
+    API --> RD[("Redis<br/>budgets, limits, queue")]
+    API --> S3[("S3-compatible store<br/>curated SQLite per dataset")]
+    RD --> W["Worker<br/>ingestion, reports, mail"]
+    SCH["Scheduler<br/>dataset syncs"] --> PG
+    CON["Connectors<br/>PostgreSQL, MySQL,<br/>REST, S3, files"] --> W
     W --> PG
     W --> S3
 ```
 
-Full details: [docs/02_ARCHITECTURE.md](docs/02_ARCHITECTURE.md).
+Full details: [docs/02_ARCHITECTURE.md](docs/02_ARCHITECTURE.md). Decisions worth reading: why retrieval stays TF-IDF (section "Knowledge hub"), why the agent cannot read tool output, why investigations are templates rather than free-form generation.
 
 ## Tech stack
 
 | Layer | Choice |
 |---|---|
-| API | Python 3.12, FastAPI 0.159, Starlette 1.9, Pydantic, slowapi |
+| API | Python 3.12, FastAPI, Starlette, Pydantic, slowapi |
 | SQL safety | sqlglot (AST), SQLite authorizer, read-only connections |
-| Data | pandas, openpyxl → SQLite |
-| State | SQLAlchemy 2, Alembic (15 migrations), PostgreSQL 16 |
-| Jobs and storage | Redis + RQ; boto3 for S3, Cloudflare R2 or MinIO |
-| LLMs | Groq, OpenAI and Anthropic SDKs; order and model IDs set by environment variables |
+| Data | pandas, openpyxl, pyarrow → curated SQLite per dataset |
+| State | SQLAlchemy 2, Alembic (25 migrations), PostgreSQL 16 |
+| Jobs and storage | Redis + RQ; boto3 for S3, Cloudflare R2 or MinIO; a scheduler process for syncs |
+| Retrieval | TF-IDF with an inverted index, one implementation shared by schema and document search |
+| LLMs | Groq, OpenAI, Anthropic (Gemini and xAI adapters verified against stubs only); order and routing set by environment variables |
 | Auth | bcrypt, PyJWT (revocable server-side sessions), optional Google Identity Services |
 | Frontend | Vanilla HTML/CSS/JS served from the same origin, self-hosted fonts |
-| Quality | pytest, jsdom, Puppeteer, Ruff, pip-audit, GitHub Actions |
-| Deployment | Docker (multi-stage, non-root), Docker Compose (development), Render blueprint |
+| Quality | pytest (about 1,550 tests), jsdom, Puppeteer, Ruff, pip-audit, GitHub Actions, real PostgreSQL and MySQL containers in CI |
+| Deployment | Docker (multi-stage, non-root), Docker Compose, Render blueprint |
 
 ## Prerequisites
 
@@ -108,6 +129,10 @@ docker compose down
 ```
 
 `docker compose down` keeps the database volume. **Do not add `-v`** unless you intend to delete all local data. The worker's healthcheck checks for its own Redis heartbeat, so `docker compose ps` should show `api` and `worker` as healthy.
+
+Two things that surprise people on the local stack:
+- Uploaded files are stored inside the containers (as on a Render redeploy), so `docker compose up --build` loses them while the database keeps their records; such datasets then report that their file is not available. Re-upload, or set the `S3_*` variables to keep files in object storage as production does.
+- Database connections refuse private and internal addresses (SSRF protection), so the stack's own `db` host is rejected. Set `CONNECTOR_ALLOW_PRIVATE_HOSTS=true` in `.env` to test connections against local databases.
 
 ## Health checks
 
@@ -164,10 +189,16 @@ ruff check .
 ```bash
 python -m evaluation run --mode oracle
 ```
+```bash
+python -m evaluation.platform
+```
+```bash
+scripts/launch_rehearsal.sh
+```
 
-`npm ci` is optional; without Node.js, the jsdom XSS and browser tests are skipped. `tests/test_v108_multiformat_eval.py` needs the owner's evaluation files, which are not in the repository (put them in `tests/fixtures/user/` or set `QUERYSURE_EVAL_DATA`; see [evaluation/README.md](evaluation/README.md)); without them it is skipped.
+`npm ci` is optional; without Node.js, the jsdom XSS and browser tests are skipped. The browser test uses a Linux Chromium build; on macOS or Windows point it at a local Chrome, e.g. `CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`. `tests/test_v108_multiformat_eval.py` needs the owner's evaluation files, which are not in the repository (put them in `tests/fixtures/user/` or set `QUERYSURE_EVAL_DATA`; see [evaluation/README.md](evaluation/README.md)); without them it is skipped.
 
-**Last verified run:** 1,171 passed, 0 failed, 14 skipped (1,167 passed, 18 skipped from the release ZIP, which leaves out the private evaluation files) (Python 3.12, SQLite, macOS, without the Node.js test dependencies); the PostgreSQL-only and Node/browser tests were among the skipped. The Docker Compose stack was checked by hand end to end (docs/03_EVALUATION.md, section 3.2). The offline benchmark reproduced 62/62 in `oracle` mode, and the validator let 0 of 5 hallucinating queries through in `synthetic` mode. See [docs/03_EVALUATION.md](docs/03_EVALUATION.md).
+**Last verified run (Sprint 13, 2026-11-07):** 1,503 passed, 0 failed, 46 skipped on SQLite; 1,536 passed, 0 failed, 14 skipped against real PostgreSQL 16 with PostgreSQL and MySQL 8.4 as data sources (Python 3.12, macOS); the two browser tests were not re-run this sprint (no UI change; last run 2 of 2). Alembic upgrade, check, downgrade and upgrade ran clean on PostgreSQL, Ruff is clean, and `scripts/launch_rehearsal.sh` passed. The offline SQL benchmark reproduced 62/62 in `oracle` mode (a harness self-check, not a model score). See [docs/03_EVALUATION.md](docs/03_EVALUATION.md).
 
 ## Packaging a release
 
@@ -181,23 +212,32 @@ It decides what ships itself (independently of `.gitignore`), writes one `querys
 
 ## Limitations
 
-- **Live-model accuracy is only partly measured, and is well below 99%.** On the multi-format suite (CSV, Excel, JSON, two SQLite databases, 8 language/style variants), Groq `gpt-oss-120b` got 57.5% (tuned) and 60.9% (held-out) of the questions it answered exactly right, and about 63% on the Stats NZ CSV after the hierarchy fix ([section 3.3](docs/03_EVALUATION.md#33-hierarchical-statistics-files-stats-nz-csv-2026-10-24)); most calls were refused by the free-tier quota. With correct SQL supplied, the deterministic pipeline accepts and checks 212 of 212 runs without false alarms. See [docs/03_EVALUATION.md](docs/03_EVALUATION.md#31-multi-format-evaluation-2026-10-24).
-- Independent recalculation covers single-table questions only, so most multi-table answers show "not independently verified".
-- No clarifying questions for ambiguous requests.
+What is **not** proven, stated up front:
+
+- **Live-model quality is only partly measured, and is well below 99%.** On the multi-format SQL suite, Groq `gpt-oss-120b` got 57.5% (tuned) and 60.9% (held-out) of questions exactly right, and about 63% on the Stats NZ CSV after the hierarchy fix ([details](docs/03_EVALUATION.md#31-multi-format-evaluation-2026-10-24)); most calls were refused by the free-tier quota. **Agent-plan quality and cited-answer quality with a real model have not been measured at all.** The tooling exists (`scripts/live_quality.sh`, `python -m evaluation.platform --suite answers --mode live`) but needs a funded key; the offline numbers above test the code around the model, not the model.
+- **Retrieval is lexical.** Paraphrased questions miss about 28% of the time (recall@3 0.72). A vector index was measured against a rule fixed in advance and is not justified yet; it would be reconsidered if live results show paraphrase misses dominate.
+- **Citations are checked for existence, not factual support.** An answer can cite a real passage and still be wrong.
+- **Deployment is rehearsed, not operated.** The production-mode rehearsal passes on one machine ([checklist section 7](docs/LAUNCH_CHECKLIST.md)); there has been no cloud deployment, no real mail delivery check, no PostgreSQL or concurrent-load benchmark.
+- Capacity limits: 25,000 passages per workspace (about 285 MB of index per active workspace), 500,000 rows per table for investigations.
+- Independent recalculation covers single-table questions only, so most multi-table answers show "not independently verified". No clarifying questions for ambiguous requests.
 - **Billing is not connected to a payment provider.** Only a provider-neutral webhook engine and a generic reference adapter exist ([docs/BILLING.md](docs/BILLING.md)).
-- `render.yaml` uses free plans (PostgreSQL expires after 30 days; Key Value is not persistent). Upgrade before real users. Not production-validated.
+- `render.yaml` uses free plans (PostgreSQL expires after 30 days; Key Value is not persistent). Upgrade before real users.
 - The auth token is kept in `localStorage` (mitigated by CSP and escaping); no MFA.
 
 ## Documentation
 
 | Document | Contents |
 |---|---|
+| [Index](docs/README.md) · [User guide](docs/USER_GUIDE.md) · [Developer guide](docs/DEVELOPMENT.md) · [Design decisions](docs/DECISIONS.md) | Start here, by role |
 | [Product](docs/01_PRODUCT.md) | Problem, users, journey, features, MVP scope, product decisions |
 | [Architecture](docs/02_ARCHITECTURE.md) | Components, NL-to-SQL workflow, data flow, database, APIs, security, deployment |
 | [Evaluation](docs/03_EVALUATION.md) | Test results, AI evaluation method and findings, security checks, limitations |
-| [Sprint history](docs/SPRINT_HISTORY.md) | Seven-sprint retrospective reconstruction with stories, acceptance criteria and evidence |
+| [Sprint history](docs/SPRINT_HISTORY.md) | Thirteen-sprint record with acceptance criteria and evidence |
 | [API reference](docs/API.md) | Every route (checked against the code by a test) |
 | [Environment variables](docs/ENVIRONMENT.md) | Every setting (checked against the code by a test) |
+| [Capability map](docs/CAPABILITY_MAP.md) | Every capability classified against the code, with evidence |
+| [Launch checklist](docs/LAUNCH_CHECKLIST.md) | Gates, production configuration, smoke test, recovery checks and the production-mode rehearsal |
+| [Baselines](docs/baseline/) | Measured retrieval, safety and latency numbers, regenerated by commands |
 | [Operations](docs/OPERATIONS.md) | Deployment, monitoring, alerts, runbooks, backup and recovery |
 | [Billing](docs/BILLING.md) | Payment adapter contract and webhook engine |
 | [Evaluation harness](evaluation/README.md) · [Load tests](loadtests/README.md) | How to run the benchmark and the load tests |
@@ -205,15 +245,16 @@ It decides what ships itself (independently of `.gitignore`), writes one `querys
 ## Repository map
 
 ```
-api.py            HTTP routes and pipeline orchestration
-config.py         all environment configuration and production guards
-modules/          ingestion, profiling, retrieval, planner, SQL generator, validator, sandbox, verifier
-ai_guard.py       AI budgets, timeouts, circuit breakers
-jobs.py, worker.py  background jobs (RQ)
-observability/    structured logs, metrics, SLOs, alerts, health
-migrations/       Alembic migrations (15)
-evaluation/       62-case benchmark harness
-static/           frontend
-tests/            pytest suite (69 files)
-docs/             documentation
+api.py, *_api.py     HTTP routes (auth, workspaces, datasets, connections, conversations, agent, investigations, governance)
+config.py            all environment configuration and production guards
+workspaces.py        tenancy and roles (the single permission check)      audit.py   append-only audit log
+modules/             ingestion, profiling, retrieval, planner, SQL generator, validator, sandbox, verifier
+ingest*.py, quality.py, connectors/, scheduler.py   dataset imports, sources, data quality, scheduled syncs
+knowledge.py, assistant.py, agent.py, investigation.py   documents + cited answers, chat, controlled agent, investigations
+ai/, ai_guard.py     provider routing, budgets, circuit breakers, call trace
+jobs.py, worker.py   background jobs (RQ)            observability/   logs, metrics, SLOs, alerts, health
+migrations/          Alembic migrations (25)         static/           frontend
+evaluation/          SQL benchmark + platform suites (retrieval, agent, answers, safety, perf)
+scripts/             backups, restore check, release packaging, launch rehearsal, smoke test, live quality run
+tests/               pytest suite                    docs/            documentation and measured baselines
 ```

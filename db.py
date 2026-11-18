@@ -30,8 +30,8 @@ from sqlalchemy import (
     JSON,
     Boolean,
     BigInteger,
-    update as sa_update,
     false as sa_false,
+    true as sa_true,
     UniqueConstraint,
     Index,
     create_engine,
@@ -252,6 +252,12 @@ class PipelineSession(Base):
     # Stored size of the user-UPLOADED dataset this session points at (NULL for no dataset and for the
     # shared sample database). Drives the per-user storage quota; deliberately not in SESSION_FIELDS.
     dataset_bytes = Column(BigInteger, nullable=True)
+    # Catalog entry (datasets.id) for the uploaded dataset this session points at; NULL for no dataset and for the sample
+    # database. No FK: kept consistent by workspaces.py, like query_history.session_id.
+    dataset_id = Column(String(36), nullable=True, index=True)
+    # Sprint 3: the catalog dataset's ``version`` this session's schema/semantic snapshot was built from. A re-import bumps the
+    # dataset's version; a session on an older one is told to reopen instead of querying a schema it no longer matches.
+    dataset_version = Column(Integer, nullable=True)
 
     user = relationship("User", back_populates="pipeline_sessions")
 
@@ -309,6 +315,7 @@ class AIInvocation(Base):
     request_id = Column(String(64), nullable=True)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     session_id = Column(String(36), nullable=True)  # no FK: audit rows outlive deleted sessions
+    trace_id = Column(String(64), nullable=True, index=True)  # Sprint 2: joins this summary to its ai_calls rows
     provider = Column(String(32), nullable=True)
     model = Column(String(128), nullable=True)
     prompt_version = Column(String(32), nullable=True)
@@ -323,6 +330,34 @@ class AIInvocation(Base):
     validation_status = Column(String(32), nullable=True)
     success = Column(Boolean, nullable=False, default=False, server_default=sa_false())
     error_type = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class AICall(Base):
+    """One row per provider ATTEMPT (Sprint 2), grouped by ``trace_id`` -- the detail behind an AIInvocation summary.
+    Holds ids, provider, model, task, timing, tokens, cost and a sanitized error code: never prompts, SQL, data or keys."""
+
+    __tablename__ = "ai_calls"
+    __table_args__ = (Index("ix_ai_calls_user_created", "user_id", "created_at"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    trace_id = Column(String(64), nullable=False, index=True)
+    request_id = Column(String(64), nullable=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(String(36), nullable=True)  # no FK: the trail outlives a deleted workspace
+    task_type = Column(String(32), nullable=False)
+    provider = Column(String(32), nullable=False)
+    model = Column(String(128), nullable=True)
+    attempt_no = Column(Integer, nullable=False)
+    retry_index = Column(Integer, nullable=False, default=0, server_default="0")
+    outcome = Column(String(16), nullable=False)            # success | failure | skipped
+    error_category = Column(String(64), nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    usage_estimated = Column(Boolean, nullable=False, default=False, server_default=sa_false())
+    estimated_cost_cents = Column(Float, nullable=False, default=0.0, server_default="0")
+    tool_calls = Column(JSON, nullable=True)                # names of structured-output tools the provider was forced to use
     created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
 
 
@@ -400,6 +435,344 @@ class OpsIncident(Base):
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     occurrences = Column(Integer, nullable=False, default=1, server_default="1")
     detail = Column(JSON, nullable=True)
+
+
+class Workspace(Base):
+    """A unit of ownership and authorization. Every user has exactly one personal workspace (``personal_owner_id`` set,
+    unique) and may own or belong to team workspaces. Roles live in ``workspace_members``."""
+
+    __tablename__ = "workspaces"
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    name = Column(String(120), nullable=False)
+    kind = Column(String(16), nullable=False, default="team", server_default="team")  # personal | team
+    owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    personal_owner_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, unique=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class WorkspaceMember(Base):
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "user_id", name="uq_workspace_members_workspace_user"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(16), nullable=False)  # owner | admin | analyst | viewer
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class Dataset(Base):
+    """Catalog entry for one stored, uploaded dataset (a managed SQLite file in storage). A row exists exactly as long as
+    its file does: storage cleanup deletes the row with the file. ``storage_ref`` is internal and never returned by the API.
+    The dataset always belongs to a workspace its creator is a member of (re-homed to their personal workspace otherwise)."""
+
+    __tablename__ = "datasets"
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    source_type = Column(String(32), nullable=False, default="upload", server_default="upload")
+    file_format = Column(String(16), nullable=True)  # csv | json | xlsx | xlsm | sqlite
+    storage_ref = Column(Text, nullable=False, unique=True)
+    bytes = Column(BigInteger, nullable=True)
+    table_count = Column(Integer, nullable=True)
+    row_count = Column(BigInteger, nullable=True)
+    schema_version = Column(Integer, nullable=False, default=1, server_default="1")  # bumped when a re-import changes the schema
+    # Sprint 3: ``version`` is bumped on EVERY successful import (data swap); ``status`` is importing | ready;
+    # ``fingerprint`` is the sha256 of the source file behind the current curated version.
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    status = Column(String(16), nullable=False, default="ready", server_default="ready")
+    connector = Column(String(32), nullable=True)
+    fingerprint = Column(String(64), nullable=True)
+    # Sprint 4: a dataset imported from a database connection keeps its source (NULL for file uploads). ``sync_config`` holds
+    # {mode, watermark_column, watermark_type, primary_key, source_schema}; detaching (deleting the connection) clears connection_id.
+    connection_id = Column(String(36), nullable=True, index=True)
+    source_table = Column(String(255), nullable=True)
+    sync_config = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class Connection(Base):
+    """A saved connection to an external database (Sprint 4), owned by a workspace. ``config`` holds non-secret settings
+    (host, port, database, user, ssl_mode); the password lives only in ``secret_ciphertext`` (Fernet, bound to this row's id)
+    and is never returned by any API. Disabled connections cannot be tested, browsed or synced."""
+
+    __tablename__ = "connections"
+    __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_connections_workspace_name"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_by = Column(String(36), nullable=True)   # no FK: the connection outlives the creator's membership
+    name = Column(String(120), nullable=False)
+    connector = Column(String(32), nullable=False)   # postgres | mysql
+    config = Column(JSON, nullable=False)
+    secret_ciphertext = Column(Text, nullable=True)
+    status = Column(String(16), nullable=False, default="active", server_default="active")   # active | disabled
+    last_test_at = Column(DateTime(timezone=True), nullable=True)
+    last_test_ok = Column(Boolean, nullable=True)
+    last_test_error = Column(String(64), nullable=True)   # error code, never a driver message
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class IngestionCheckpoint(Base):
+    """Where the next incremental run of a dataset starts. Written in the SAME transaction as the version swap, so a failed
+    run never advances it (nothing is lost) and a re-run of the same window only re-reads rows (upserts keep it idempotent)."""
+
+    __tablename__ = "ingestion_checkpoints"
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id = Column(String(36), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, unique=True)
+    column_name = Column(String(255), nullable=False)
+    column_type = Column(String(16), nullable=False)    # integer | timestamp
+    value = Column(String(64), nullable=False)          # integer as text, timestamp as UTC ISO text
+    # Sprint 5: structured state for sources that are not a single watermark (S3: {"objects": {key: [etag, modified, size, rows]}}).
+    state = Column(JSON, nullable=True)
+    run_id = Column(String(36), nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class KnowledgeDocument(Base):
+    """A text document in a workspace's knowledge hub (Sprint 7). Only the extracted text is kept, as ``KnowledgeChunk`` rows; the
+    uploaded file itself is not retained. Deleting the document deletes its chunks, so it can no longer be retrieved or cited."""
+
+    __tablename__ = "knowledge_documents"
+    __table_args__ = (Index("uq_knowledge_documents_ws_fingerprint", "workspace_id", "fingerprint", unique=True),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), nullable=False, index=True)
+    created_by = Column(String(36), nullable=False)
+    name = Column(String(255), nullable=False)
+    file_format = Column(String(16), nullable=False)          # txt | md | pdf | docx
+    bytes = Column(BigInteger, nullable=False, default=0, server_default="0")
+    fingerprint = Column(String(64), nullable=False)          # sha256 of the uploaded bytes: the same file is not indexed twice
+    chunk_count = Column(Integer, nullable=False, default=0, server_default="0")
+    char_count = Column(Integer, nullable=False, default=0, server_default="0")
+    page_count = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class KnowledgeChunk(Base):
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (Index("ix_knowledge_chunks_doc_ordinal", "document_id", "ordinal"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    document_id = Column(String(36), ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(String(36), nullable=False, index=True)
+    ordinal = Column(Integer, nullable=False)
+    page = Column(Integer, nullable=True)
+    heading = Column(String(200), nullable=True)
+    text = Column(Text, nullable=False)
+
+
+class Conversation(Base):
+    """A private assistant chat of one user inside a workspace (Sprint 8). Only its creator can read it; deleting the user, the
+    workspace or the chat deletes its messages."""
+
+    __tablename__ = "conversations"
+    __table_args__ = (Index("ix_conversations_ws_user_updated", "workspace_id", "user_id", "updated_at"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), nullable=False)
+    user_id = Column(String(36), nullable=False)
+    title = Column(String(120), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class ConversationMessage(Base):
+    """One turn of a ``Conversation``. Assistant turns keep the intent, the validated citations, the source passages shown to the user
+    and the provider/trace ids; no secrets or API keys are stored."""
+
+    __tablename__ = "conversation_messages"
+    __table_args__ = (Index("ix_conversation_messages_conv", "conversation_id", "id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    conversation_id = Column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String(16), nullable=False)                  # user | assistant
+    content = Column(Text, nullable=False)
+    intent = Column(String(24), nullable=True)                 # knowledge | data_question | smalltalk
+    grounded = Column(Boolean, nullable=True)
+    citations = Column(JSON, nullable=True)
+    sources = Column(JSON, nullable=True)
+    provider = Column(String(40), nullable=True)
+    trace_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class AgentRun(Base):
+    """One run of the controlled agent (Sprint 9): a goal, a validated plan of registered tool calls and its outcome. The plan is made
+    once; tool output is never fed back to the model, so retrieved text cannot change what runs."""
+
+    __tablename__ = "agent_runs"
+    __table_args__ = (Index("ix_agent_runs_ws_user_created", "workspace_id", "user_id", "created_at"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), nullable=False)
+    user_id = Column(String(36), nullable=False)
+    goal = Column(Text, nullable=False)
+    status = Column(String(24), nullable=False, default="planned")   # planned | awaiting_approval | completed | failed | rejected | cancelled
+    message = Column(Text, nullable=True)                            # the planner's note when no tool is needed, or the outcome summary
+    error_code = Column(String(40), nullable=True)
+    provider = Column(String(40), nullable=True)
+    trace_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class AgentStep(Base):
+    """One planned tool call. Write steps wait as ``awaiting_approval`` until a person with the tool's role approves the exact
+    arguments stored here; the executed arguments are always these stored ones."""
+
+    __tablename__ = "agent_steps"
+    __table_args__ = (Index("ix_agent_steps_run_ordinal", "run_id", "ordinal"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(String(36), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False)
+    ordinal = Column(Integer, nullable=False)
+    tool = Column(String(40), nullable=False)
+    args = Column(JSON, nullable=False)
+    why = Column(String(300), nullable=True)
+    risk = Column(String(8), nullable=False)                         # read | write
+    status = Column(String(20), nullable=False, default="pending")  # pending | awaiting_approval | succeeded | failed | rejected | skipped
+    result = Column(JSON, nullable=True)
+    error = Column(String(300), nullable=True)
+    decided_by = Column(String(36), nullable=True)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class Investigation(Base):
+    """A stored investigation report (Sprint 10): parameters, dataset version and the structured result (facts / hypotheses /
+    recommendations / limitations). ``exports`` maps format -> Report id (downloadable by the creator via /api/reports/{id}/download)."""
+
+    __tablename__ = "investigations"
+    __table_args__ = (Index("ix_investigations_ws_created", "workspace_id", "created_at"), Index("ix_investigations_dataset", "dataset_id"))
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), nullable=False)
+    dataset_id = Column(String(36), nullable=False)
+    created_by = Column(String(36), nullable=False)
+    kind = Column(String(16), nullable=False)
+    title = Column(String(255), nullable=False)
+    dataset_version = Column(Integer, nullable=False, default=1, server_default="1")
+    params = Column(JSON, nullable=False)
+    report = Column(JSON, nullable=False)
+    exports = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class DatasetQualityReport(Base):
+    """Data-quality profile and findings for ONE successful ingestion run (Sprint 6). Deterministic checks compare the new version with
+    the previous one and with the recent history of row counts. Holds names, counts and numeric/date summaries only -- never raw text
+    values. One row per run; the oldest are trimmed (QUALITY_REPORTS_KEEP per dataset)."""
+
+    __tablename__ = "dataset_quality_reports"
+    __table_args__ = (Index("ix_dataset_quality_dataset_created", "dataset_id", "created_at"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id = Column(String(36), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(String(36), nullable=False, index=True)
+    run_id = Column(String(36), nullable=False, unique=True)
+    dataset_version = Column(Integer, nullable=True)
+    status = Column(String(8), nullable=False)               # ok | warn | error
+    profile = Column(JSON, nullable=True)                     # {table: {rows, columns: {name: {...}}}}
+    findings = Column(JSON, nullable=True)                    # [{rule, severity, table, column, message, value, baseline}]
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+class DatasetSchedule(Base):
+    """Run a connection-backed dataset's sync on an interval (Sprint 5). The scheduler claims a due row with one conditional UPDATE
+    (so several scheduler processes never both fire it); a run that is still active is skipped, never doubled. After
+    SCHEDULER_MAX_CONSECUTIVE_FAILURES failed runs, or when the owner loses access, the schedule disables itself and says why."""
+
+    __tablename__ = "dataset_schedules"
+    __table_args__ = (Index("ix_dataset_schedules_due", "enabled", "next_run_at"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id = Column(String(36), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, unique=True)
+    interval_minutes = Column(Integer, nullable=False)
+    mode = Column(String(16), nullable=False, default="incremental", server_default="incremental")
+    enabled = Column(Boolean, nullable=False, default=True, server_default=sa_true())
+    next_run_at = Column(DateTime(timezone=True), nullable=False)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    last_status = Column(String(16), nullable=True)           # queued | succeeded | failed | skipped
+    last_job_id = Column(String(36), nullable=True)
+    consecutive_failures = Column(Integer, nullable=False, default=0, server_default="0")
+    disabled_reason = Column(String(64), nullable=True)
+    created_by = Column(String(36), nullable=False)           # runs act as this user; they must keep analyst+ in the workspace
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, nullable=False)
+
+
+class IngestionRun(Base):
+    """One import of a dataset (Sprint 3). At most ONE active (queued/running) run per dataset: a partial unique index, so the
+    database enforces it even across processes. Counts cover the whole source; row-level rejections live in the dataset's own
+    SQLite file (``_qs_quarantine``), never here. ``error_detail`` and ``table_stats`` hold names and counts only."""
+
+    __tablename__ = "ingestion_runs"
+    __table_args__ = (
+        Index("ix_ingestion_runs_dataset_started", "dataset_id", "started_at"),
+        Index("uq_ingestion_runs_active_dataset", "dataset_id", unique=True,
+              postgresql_where=text("status IN ('queued', 'running')"), sqlite_where=text("status IN ('queued', 'running')")),
+    )
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    dataset_id = Column(String(36), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(String(36), nullable=False, index=True)
+    user_id = Column(String(36), nullable=True)           # who started it; no FK so history outlives the account
+    job_id = Column(String(36), nullable=True, index=True)
+    connector = Column(String(32), nullable=False)
+    mode = Column(String(16), nullable=False, default="full_refresh", server_default="full_refresh")
+    status = Column(String(16), nullable=False, default="queued", server_default="queued")  # queued|running|succeeded|failed|skipped|interrupted
+    source_name = Column(String(255), nullable=True)
+    source_bytes = Column(BigInteger, nullable=True)
+    source_fingerprint = Column(String(64), nullable=True)
+    records_read = Column(BigInteger, nullable=False, default=0, server_default="0")
+    records_inserted = Column(BigInteger, nullable=False, default=0, server_default="0")
+    records_updated = Column(BigInteger, nullable=False, default=0, server_default="0")
+    records_skipped = Column(BigInteger, nullable=False, default=0, server_default="0")
+    records_rejected = Column(BigInteger, nullable=False, default=0, server_default="0")
+    duplicate_rows = Column(BigInteger, nullable=False, default=0, server_default="0")  # detected, kept (report only)
+    reject_reasons = Column(JSON, nullable=True)   # {reason_code: count}
+    table_stats = Column(JSON, nullable=True)      # {table: {read, inserted, rejected}}
+    schema_changes = Column(JSON, nullable=True)   # [{table, change, column, from, to, compatible}]
+    dataset_version = Column(Integer, nullable=True)  # the version this run produced
+    curated_ref = Column(Text, nullable=True)
+    raw_ref = Column(Text, nullable=True)
+    # Sprint 4: incremental runs record the watermark window and why a requested incremental became a full refresh.
+    watermark_before = Column(String(64), nullable=True)
+    watermark_after = Column(String(64), nullable=True)
+    fallback_reason = Column(String(64), nullable=True)
+    error_code = Column(String(64), nullable=True)
+    error_detail = Column(String(300), nullable=True)
+    started_at = Column(DateTime(timezone=True), default=_now, nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AuditLog(Base):
+    """Append-only record of who did what in a workspace. The application never updates or deletes a row (enforced in
+    audit.py); rows go only when their workspace is deleted (account or workspace erasure). ``details`` holds allow-listed
+    scalars only: never secrets, SQL, questions, data values or e-mail addresses."""
+
+    __tablename__ = "audit_log"
+    __table_args__ = (Index("ix_audit_log_workspace_created", "workspace_id", "created_at"),)
+
+    id = Column(String(36), primary_key=True, default=_uuid_str)
+    workspace_id = Column(String(36), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    actor_type = Column(String(16), nullable=False)  # user | agent | system
+    actor_id = Column(String(36), nullable=True)     # no FK: entries outlive a departed member
+    action = Column(String(64), nullable=False)
+    target_type = Column(String(32), nullable=True)
+    target_id = Column(String(64), nullable=True)
+    details = Column(JSON, nullable=True)
+    request_id = Column(String(64), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, nullable=False)
 
 
 def init_db() -> None:

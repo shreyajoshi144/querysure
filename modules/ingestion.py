@@ -16,7 +16,7 @@ from config import MAX_INGEST_ROWS, MAX_INGEST_COLUMNS, MAX_INGEST_SHEETS, MAX_X
 import pandas as pd
 from .data_normalizer import normalize_tabular_values
 
-SUPPORTED_EXTENSIONS = {".csv", ".json", ".xlsx", ".xlsm", ".db", ".sqlite", ".sqlite3"}
+SUPPORTED_EXTENSIONS = {".csv", ".json", ".xlsx", ".xlsm", ".parquet", ".db", ".sqlite", ".sqlite3"}
 
 
 def sanitize_filename(filename: str | None) -> str:
@@ -89,8 +89,13 @@ def _sniff_csv(path: str) -> tuple[str, str]:
     raise ValueError(f"CSV encoding could not be decoded: {last}")
 
 
-def read_csv(path: str) -> pd.DataFrame:
+def read_csv(path: str, rejects: list | None = None) -> pd.DataFrame:
+    """``rejects`` (Sprint 3): when a list is given, rows with more fields than the header are recorded there as
+    ``{"row": n, "reason": "malformed_row"}`` and dropped instead of failing the whole file. Default behaviour is unchanged."""
     encoding, delimiter = _sniff_csv(path)
+    bad_lines = (lambda _fields: None) if rejects is not None else "error"
+    first_reject = len(rejects) if rejects is not None else 0
+    non_empty = 0
     try:
         first = None
         second = None
@@ -102,6 +107,7 @@ def read_csv(path: str) -> pd.DataFrame:
                 if len(row) > MAX_INGEST_COLUMNS:
                     raise ValueError(f"CSV has more than {MAX_INGEST_COLUMNS} columns.")
                 row_count += 1
+                non_empty = row_count
                 if row_count > MAX_INGEST_ROWS:
                     raise ValueError(f"CSV has more than {MAX_INGEST_ROWS} rows.")
                 if first is None:
@@ -109,6 +115,9 @@ def read_csv(path: str) -> pd.DataFrame:
                 elif second is None:
                     second = row
                 if first is not None and len(row) > len(first) and any(str(c).strip() for c in row[len(first):]):
+                    if rejects is not None:
+                        rejects.append({"row": row_count, "reason": "malformed_row", "column": None, "value": None})
+                        continue
                     raise ValueError(
                         f"CSV row {row_count} has {len(row)} fields but the header has {len(first)}. "
                         "A value probably contains an unquoted delimiter; quote it or fix the row."
@@ -123,16 +132,32 @@ def read_csv(path: str) -> pd.DataFrame:
                 return False
         headerless = bool(second) and all(numeric_like(v) for v in first if str(v).strip()) and all(numeric_like(v) for v in second if str(v).strip())
         if headerless:
-            df = pd.read_csv(path, sep=delimiter, encoding=encoding, engine="python", header=None)
+            df = pd.read_csv(path, sep=delimiter, encoding=encoding, engine="python", header=None, on_bad_lines=bad_lines)
             df.columns = [f"column_{i}" for i in range(1, len(df.columns) + 1)]
         else:
-            df = pd.read_csv(path, sep=delimiter, encoding=encoding, engine="python", index_col=False)
+            df = pd.read_csv(path, sep=delimiter, encoding=encoding, engine="python", index_col=False, on_bad_lines=bad_lines)
+        bad_pos: list[int] = []
+        if rejects is not None and len(rejects) > first_reject:
+            # pandas truncates a long row (index_col=False) instead of dropping it, so the rows the pre-check flagged are
+            # removed here by position; the row counts must line up exactly or the file is refused rather than guessed at.
+            offset = 1 if headerless else 2
+            bad_pos = [r["row"] - offset for r in rejects[first_reject:]]
+            expected = non_empty - (0 if headerless else 1)
+            if len(df) == expected:
+                df = df.drop(df.index[bad_pos]).reset_index(drop=True)
+            elif len(df) != expected - len(bad_pos):
+                raise ValueError("CSV rows could not be matched to their line numbers.")
+            else:
+                bad_pos = []
         numeric_pos = [i for i, c in enumerate(df.columns) if pd.api.types.is_numeric_dtype(df[c])]
         if numeric_pos:
             raw = pd.read_csv(
                 path, sep=delimiter, encoding=encoding, engine="python", index_col=False,
                 header=None if headerless else 0, dtype=str, keep_default_na=False, usecols=numeric_pos,
+                on_bad_lines=bad_lines,
             )
+            if bad_pos:
+                raw = raw.drop(raw.index[bad_pos]).reset_index(drop=True)
             for out_pos, col_pos in enumerate(numeric_pos):
                 text = raw.iloc[:, out_pos]
                 if text.str.match(r"^\s*[+-]?0\d").any():
@@ -439,6 +464,8 @@ def validate_sqlite(path: str) -> list[str]:
             ).fetchall()]
             if not tables:
                 raise ValueError("SQLite database contains no usable tables.")
+            if any(t.startswith("_qs_") for t in tables):
+                raise ValueError("Table names starting with '_qs_' are reserved by QuerySure; rename them and upload again.")
             if len(tables) > MAX_INGEST_SHEETS:
                 raise ValueError(f"SQLite database contains more than {MAX_INGEST_SHEETS} tables.")
             for table in tables:
@@ -467,7 +494,13 @@ def ingest_to_sqlite(source_path: str, extension: str, destination_db: str, base
     conn = sqlite3.connect(destination_db)
     tables: list[str] = []
     try:
-        if ext == ".csv":
+        if ext == ".parquet":
+            from connectors.base import Rejects
+            from connectors.files import ParquetConnector
+            for name, df in ParquetConnector().read_tables(source_path, base_name, Rejects()).items():
+                df.to_sql(name, conn, if_exists="replace", index=False)
+                tables.append(name)
+        elif ext == ".csv":
             df = read_csv(source_path)
             name = safe_table_name(base_name)
             df.to_sql(name, conn, if_exists="replace", index=False)

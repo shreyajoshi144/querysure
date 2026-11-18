@@ -130,6 +130,7 @@ from modules.query_result_engine import PREVIEW_MAX_PAGE_SIZE, PREVIEW_MAX_ROWS,
 from db import (
     User,
     PipelineSession,
+    Dataset,
     get_db,
     init_db,
     get_or_create_session,
@@ -153,6 +154,10 @@ from db import (
 import storage
 import config as _config_module
 import quotas
+import audit
+import workspaces
+from ai import router as _ai_router
+from ai import trace as ai_trace
 from auth import (
     JWT_SECRET_KEY,
     JWT_ALGORITHM,
@@ -1009,6 +1014,9 @@ def _start_observability() -> None:
     obs_errors.init_sentry()
     obs_gauges.start_publisher("web")
     obs_alerts.start_maintenance()
+    if _config_module.SCHEDULER_ENABLED:      # development convenience; production runs `python scheduler.py` as its own process
+        import scheduler
+        scheduler.start_in_process()
 
 
 UPLOAD_DIR = storage.UPLOAD_DIR
@@ -1024,6 +1032,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 _MAX_UPLOAD_BYTES = _config_module.MAX_UPLOAD_MB * 1024 * 1024
 MAX_UPLOAD_CSV_BYTES = min(50 * 1024 * 1024, _MAX_UPLOAD_BYTES)    # at most 50 MB (also applies to .json)
 MAX_UPLOAD_DB_BYTES = min(100 * 1024 * 1024, _MAX_UPLOAD_BYTES)    # at most 100 MB
+MAX_UPLOAD_PARQUET_BYTES = min(_MAX_UPLOAD_BYTES, _config_module.MAX_UPLOAD_PARQUET_MB * 1024 * 1024)   # decoded size is bounded separately
 MAX_UPLOAD_XLSX_BYTES = min(50 * 1024 * 1024, _MAX_UPLOAD_BYTES,
                             _config_module.MAX_UPLOAD_XLSX_MB * 1024 * 1024)   # at most 50 MB; MAX_UPLOAD_XLSX_MB lowers it
 _MULTIPART_OVERHEAD_BYTES = 64 * 1024
@@ -1041,6 +1050,7 @@ UPLOAD_SIZE_LIMITS = {
     ".sqlite3": MAX_UPLOAD_DB_BYTES,
     ".xlsx": MAX_UPLOAD_XLSX_BYTES,
     ".xlsm": MAX_UPLOAD_XLSX_BYTES,
+    ".parquet": MAX_UPLOAD_PARQUET_BYTES,
 }
 
 
@@ -1186,6 +1196,7 @@ def _release_superseded_dataset(db: OrmSession, old_ref: str | None, new_ref: st
         if still_used:
             return
         storage.delete_dataset(old_ref)
+        workspaces.forget_storage_ref(db, old_ref)
     except Exception as e:
         logger.warning("superseded dataset cleanup failed for session %s: %s", session_id, e)
 
@@ -1399,7 +1410,10 @@ async def login(request: Request, db: OrmSession = Depends(get_db)):
         return err_response("Incorrect email or password.", code=401)
     if not user.email_verified:
         return err_response("Please verify your email before signing in.", code=403, error_code="EMAIL_NOT_VERIFIED")
-    return {"access_token": issue_session_token(db, user), "token_type": "bearer"}
+    token = issue_session_token(db, user)
+    await run_in_threadpool(audit.record_for_user, user.id, "auth.login", target_type="user", target_id=user.id,
+                            details={"method": "password"})
+    return {"access_token": token, "token_type": "bearer"}
 
 
 @app.post("/api/auth/change-password", response_model=Token)
@@ -1488,7 +1502,9 @@ def google_sign_in(request: Request, payload: GoogleSignInRequest, db: OrmSessio
     if user:
         if not user.is_active:
             return err_response("This account is inactive.", code=403, error_code="ACCOUNT_INACTIVE")
-        return {"access_token": issue_session_token(db, user), "token_type": "bearer"}
+        token = issue_session_token(db, user)
+        audit.record_for_user(user.id, "auth.login", target_type="user", target_id=user.id, details={"method": "google"})
+        return {"access_token": token, "token_type": "bearer"}
 
     # Never silently attach Google to a password account based only on email.
     existing = db.query(User).filter(User.email == email).first()
@@ -1516,7 +1532,9 @@ def google_sign_in(request: Request, payload: GoogleSignInRequest, db: OrmSessio
     except IntegrityError:
         db.rollback()
         return err_response("Google sign-in could not complete. Please try again.", code=409, error_code="GOOGLE_ACCOUNT_CONFLICT")
-    return {"access_token": issue_session_token(db, user), "token_type": "bearer"}
+    token = issue_session_token(db, user)
+    audit.record_for_user(user.id, "auth.login", target_type="user", target_id=user.id, details={"method": "google"})
+    return {"access_token": token, "token_type": "bearer"}
 
 
 @app.post("/api/auth/google/link")
@@ -1674,6 +1692,7 @@ def list_sessions(
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
             "has_dataset": bool(r.db_path),
             "dataset_bytes": r.dataset_bytes,
+            "dataset_id": r.dataset_id,
         } for r in rows],
         "quota": {"limits": _config_module.plan_quota(current_user.plan), "used": quotas.usage_for_user(db, current_user.id)},
     })
@@ -1722,6 +1741,8 @@ def flush_session(
     cleared = {field: None for field in SESSION_FIELDS if field != "db_path"}
     cleared["db_path"] = None
     cleared["dataset_bytes"] = None
+    cleared["dataset_id"] = None
+    cleared["dataset_version"] = None
     row = update_session(db, row, **cleared)
     clear_cache_key(row.id)
     _release_superseded_dataset(db, old_ref, None, row.id)
@@ -1748,7 +1769,7 @@ def connect_sample(
     semantic = build_semantic_layer(schema)
     clear_cache_key(row.id)
     build_vector_store(semantic, cache_key=row.id)
-    row = update_session(db, row, db_path=SAMPLE_DB, dataset_bytes=None, schema=schema, semantic=semantic, **_clear_query_state(row))
+    row = update_session(db, row, db_path=SAMPLE_DB, dataset_bytes=None, dataset_id=None, dataset_version=None, schema=schema, semantic=semantic, **_clear_query_state(row))
     _release_superseded_dataset(db, old_ref, SAMPLE_DB, row.id)
 
     return ok_response({
@@ -1770,14 +1791,20 @@ def connect_upload(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session_id: str = Form(None),
+    workspace_id: str = Form(None),
     current_user: User = Depends(get_current_user),
     db: OrmSession = Depends(get_db),
 ):
     fname = sanitize_filename(file.filename)
+    try:
+        # Catalog target for the new dataset: an explicitly chosen workspace needs analyst+; default is personal.
+        target_workspace_id = workspaces.upload_workspace_id(db, current_user, workspace_id)
+    except workspaces.WorkspaceError as exc:
+        return err_response(exc.message, code=exc.status_code, error_code=exc.code)
     ext = os.path.splitext(fname)[1].lower()
     if ext not in UPLOAD_SIZE_LIMITS:
         return err_response(
-            "Unsupported file type. Upload a .csv, .json, .xlsx, .xlsm, .db, .sqlite, or .sqlite3 file."
+            "Unsupported file type. Upload a .csv, .json, .xlsx, .xlsm, .parquet, .db, .sqlite, or .sqlite3 file."
         )
 
     size_limit = UPLOAD_SIZE_LIMITS[ext]
@@ -1801,7 +1828,6 @@ def connect_upload(
         storage.discard_local(raw_path)
         return JSONResponse(status_code=403, content=exc.as_payload())
 
-    kind = {".csv": "CSV", ".json": "JSON", ".xlsx": "Excel", ".xlsm": "Excel"}.get(ext, "SQLite database")
     is_sqlite = ext in {".db", ".sqlite", ".sqlite3"}
     # Heavy conversion, profiling, semantic construction and vector indexing are
     # deliberately deferred to the worker. The request only streams the upload
@@ -1824,7 +1850,8 @@ def connect_upload(
         quotas.lock_and_reserve_upload(db, current_user, upload_size, row.id)
         job = enqueue_job(
             db, current_user.id, "dataset_ingestion",
-            {"object_ref": object_ref, "path": path, "ext": ext, "fname": fname, "session_id": row.id, "size": upload_size},
+            {"object_ref": object_ref, "path": path, "ext": ext, "fname": fname, "session_id": row.id, "size": upload_size,
+             "workspace_id": target_workspace_id},
             background_tasks,
         )
         return row.id, job.id
@@ -1931,7 +1958,9 @@ def api_dataset_preview(
     if table not in tables:
         return err_response("Table not found in this dataset.", code=404, error_code="TABLE_NOT_FOUND")
     try:
-        local_db_path = storage.ensure_local(row.db_path, current_user.id)
+        local_db_path = workspaces.session_db_path(db, current_user, row)
+    except workspaces.DatasetAccessError as exc:
+        return err_response(exc.message, code=exc.status, error_code=exc.code)
     except storage.DatasetUnavailable:
         return err_response("Your uploaded dataset is no longer available on the server. Please upload it again.",
                             code=410, error_code="DATASET_UNAVAILABLE")
@@ -2011,7 +2040,7 @@ def _log_ai_invocation(db, request, user_id, session_id, result, retrieval, *, s
     record_ai_invocation(
         db,
         request_id=getattr(request.state, "request_id", None),
-        user_id=user_id, session_id=session_id,
+        user_id=user_id, session_id=session_id, trace_id=result.get("trace_id"),
         provider=provider, model=model,
         prompt_version=result.get("prompt_version"),
         input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens"),
@@ -2160,7 +2189,7 @@ def api_generate_sql(
         _usage = get_or_create_daily_usage(db, current_user.id)
         if int(_usage.query_count or 0) >= _limit:
             return JSONResponse(status_code=429, content={"success": False, **_query_limit_payload(current_user, _usage)})
-    if not api_key and not (OPENAI_API_KEY or ANTHROPIC_API_KEY):
+    if not api_key and not (OPENAI_API_KEY or ANTHROPIC_API_KEY or _config_module.openai_compatible_providers_configured()):
         return err_response(
             # Production never accepts a browser-supplied key, so only point at Settings in development.
             "AI query generation is not configured on this server. Please try again later."
@@ -2205,11 +2234,19 @@ def api_generate_sql(
         # Local path of the dataset so grounding/verification can read REAL values (read-only). Best effort: without it the
         # generator still works, it just cannot ground values or verify results.
         try:
-            _gen_db_path = storage.ensure_local(row.db_path, current_user.id) if row.db_path else None
+            _gen_db_path = workspaces.session_db_path(db, current_user, row) if row.db_path else None
+        except workspaces.DatasetAccessError as exc:   # revoked / re-imported / importing: no SQL for a dataset the user cannot use
+            _settle_ai_budget_safely(db, current_user.id, hold, 0.0, count_request=False)
+            return err_response(exc.message, code=exc.status, error_code=exc.code)
         except Exception:  # noqa: BLE001
             _gen_db_path = None
         _gen_kwargs = {"db_path": _gen_db_path} if _gen_db_path else {}
-        result = generate_sql(question=question, schema=row.schema, api_key=api_key, semantic=semantic, retrieval=retrieval, **_gen_kwargs)
+        # Sprint 2: every provider attempt of this request (fallbacks, JSON retry, repairs) is traced under one id.
+        with ai_trace.start(user_id=current_user.id, workspace_id=_session_workspace_id(db, current_user, row),
+                            request_id=getattr(request.state, "request_id", None)) as _trace:
+            result = generate_sql(question=question, schema=row.schema, api_key=api_key, semantic=semantic, retrieval=retrieval, **_gen_kwargs)
+        if isinstance(result, dict):
+            result["trace_id"] = _trace.trace_id
     except BaseException:
         # Unexpected crash between reserve and settle: give the whole reservation back, then re-raise.
         try:
@@ -2268,6 +2305,7 @@ def api_generate_sql(
         "tables_used": tables_used,
         "retrieval_confidence": retrieval.get("confidence") if isinstance(retrieval, dict) else None,
         "provider_used": result.get("provider_used"),
+        "trace_id": result.get("trace_id"),
         "plan": result.get("plan"),
         "semantic_validation": ({"status": (result.get("semantic_validation") or {}).get("status"),
                                  "issues": (result.get("semantic_validation") or {}).get("issues", [])}
@@ -2278,6 +2316,38 @@ def api_generate_sql(
             "requests": usage_today.requests if usage_today is not None else None,
             "estimated_cost_usd": round(usage_today.estimated_cost_cents / 100, 4) if usage_today is not None else None,
             "budget_usd": user_limit_usd,
+        },
+    })
+
+
+@app.get("/api/ai/traces/{trace_id}")
+def api_ai_trace(trace_id: str, current_user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)):
+    """Every provider attempt of one of the caller's AI operations, in order: task, provider, model, outcome, error code,
+    latency, tokens, cost. Owner-scoped (another user's trace is a 404). No prompts, SQL, data or keys are stored."""
+    from db import AICall
+    rows = []
+    if 0 < len(trace_id) <= 64:
+        rows = (db.query(AICall).filter(AICall.trace_id == trace_id, AICall.user_id == current_user.id)
+                .order_by(AICall.created_at, AICall.attempt_no).all())
+    if not rows:
+        return err_response("Trace not found.", code=404, error_code="TRACE_NOT_FOUND")
+    calls = [{
+        "task_type": r.task_type, "provider": r.provider, "model": r.model, "attempt_no": r.attempt_no,
+        "retry_index": r.retry_index, "outcome": r.outcome, "error_category": r.error_category, "latency_ms": r.latency_ms,
+        "input_tokens": r.input_tokens, "output_tokens": r.output_tokens, "usage_estimated": bool(r.usage_estimated),
+        "estimated_cost_cents": r.estimated_cost_cents, "tool_calls": r.tool_calls,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+    } for r in rows]
+    ok = [c for c in calls if c["outcome"] == "success"]
+    return ok_response({
+        "trace_id": trace_id, "request_id": rows[0].request_id, "calls": calls,
+        "summary": {
+            "attempts": len(calls), "succeeded": len(ok), "failed": sum(c["outcome"] == "failure" for c in calls),
+            "skipped": sum(c["outcome"] == "skipped" for c in calls),
+            "tasks": list(dict.fromkeys(c["task_type"] for c in calls)),
+            "latency_ms": sum(c["latency_ms"] or 0 for c in calls),
+            "input_tokens": sum(c["input_tokens"] or 0 for c in ok), "output_tokens": sum(c["output_tokens"] or 0 for c in ok),
+            "estimated_cost_cents": round(sum(c["estimated_cost_cents"] or 0.0 for c in ok), 6),
         },
     })
 
@@ -2300,7 +2370,7 @@ def api_ai_usage(
     )
     return ok_response({"invocations": [
         {
-            "id": r.id, "request_id": r.request_id, "session_id": r.session_id,
+            "id": r.id, "request_id": r.request_id, "session_id": r.session_id, "trace_id": r.trace_id,
             "provider": r.provider, "model": r.model, "prompt_version": r.prompt_version,
             "input_tokens": r.input_tokens, "output_tokens": r.output_tokens,
             "usage_estimated": bool(r.usage_estimated),
@@ -2315,7 +2385,32 @@ def api_ai_usage(
 
 def _record_history(db, user, row, sql, status, exec_result, error=None, question=None):
     import history_service
-    return history_service.record(db, user, row, sql, status, exec_result, error=error, question=question)
+    hist_id = history_service.record(db, user, row, sql, status, exec_result, error=error, question=question)
+    _audit_query(db, user, row, status, exec_result)
+    return hist_id
+
+
+def _session_workspace_id(db, user, row) -> str | None:
+    """Workspace that catalogs the session's dataset, else the user's personal workspace. Never raises."""
+    try:
+        ds = db.get(Dataset, row.dataset_id) if getattr(row, "dataset_id", None) else None
+        return ds.workspace_id if ds is not None else workspaces.personal_workspace_id(user.id)
+    except Exception:  # noqa: BLE001 - attribution is best effort
+        return None
+
+
+def _audit_query(db, user, row, status, exec_result) -> None:
+    """Audit one executed query in the workspace that catalogs its dataset (personal workspace otherwise). Records the
+    outcome only: never the SQL, the question or result values."""
+    try:
+        ds = db.get(Dataset, row.dataset_id) if getattr(row, "dataset_id", None) else None
+        ws_id = ds.workspace_id if ds is not None else workspaces.personal_workspace_id(user.id)
+        rows = (exec_result or {}).get("row_count") if isinstance(exec_result, dict) else None
+        audit.record(ws_id, "query.run", actor_id=user.id, target_type="session", target_id=row.id,
+                     details={"status": str(status)[:32], "row_count": rows if isinstance(rows, int) else None,
+                              "dataset_id": ds.id if ds is not None else None})
+    except Exception as exc:  # noqa: BLE001 - auditing must never fail a query
+        logger.warning("query audit failed: %s", type(exc).__name__)
 
 
 @app.get("/api/history")
@@ -2436,7 +2531,9 @@ def api_execute_sql(
         return err_response("SQL validation failed.", code=422)
 
     try:
-        local_db_path = storage.ensure_local(row.db_path, current_user.id)
+        local_db_path = workspaces.session_db_path(db, current_user, row)
+    except workspaces.DatasetAccessError as exc:
+        return err_response(exc.message, code=exc.status, error_code=exc.code)
     except storage.DatasetUnavailable:
         return err_response(
             "Your uploaded dataset is no longer available on the server. Please upload it again.",
@@ -2557,7 +2654,7 @@ def api_generate_insights(
     if not row.query_result:
         return err_response("No query results provided")
     try:   # lets a LIMITed result state shares against the full result instead of the returned rows
-        insights_db = storage.ensure_local(row.db_path, current_user.id) if row.db_path else None
+        insights_db = workspaces.session_db_path(db, current_user, row) if row.db_path else None
     except Exception:  # noqa: BLE001 - without it, shares of a LIMITed result are simply not stated
         insights_db = None
     result = generate_insights(
@@ -2638,7 +2735,8 @@ def provider_status(current_user: User = Depends(get_current_user)):
     where /api/generate-sql silently ignores body-supplied keys anyway
     (see the ENVIRONMENT == "production" check there) -- without this, the
     UI could accept and store a key that the backend would never use."""
-    server_key_configured = bool(GROQ_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY)
+    server_key_configured = bool(GROQ_API_KEY or OPENAI_API_KEY or ANTHROPIC_API_KEY
+                                 or _config_module.openai_compatible_providers_configured())
     allow_client_api_key = not IS_PRODUCTION
     from modules.sql_generator import describe_provider_chain
     chain = describe_provider_chain(GROQ_API_KEY)
@@ -2901,8 +2999,66 @@ def ready():
 
 
 from ops_api import router as _ops_router  # noqa: E402
+import workspace_api as _workspace_api  # noqa: E402
+import dataset_api as _dataset_api  # noqa: E402
+import connection_api as _connection_api  # noqa: E402
+import knowledge_api as _knowledge_api
+import conversation_api as _conversation_api
+import agent_api as _agent_api
+import investigation_api as _investigation_api
+import governance_api as _governance_api  # noqa: E402
 
 app.include_router(_ops_router)
+app.include_router(_workspace_api.build_router(limiter))
+app.include_router(_connection_api.build_router(limiter))
+
+
+class _KnowledgeAI:
+    """The existing key rules, AI budget and provider chain, handed to the knowledge routes (no second provider system)."""
+    max_question_length = MAX_QUESTION_LENGTH
+    is_production = IS_PRODUCTION
+
+    @staticmethod
+    def resolve_key(body_key):
+        return GROQ_API_KEY.strip() if IS_PRODUCTION else (body_key or GROQ_API_KEY).strip()
+
+    @staticmethod
+    def configured(api_key):
+        return bool(api_key or OPENAI_API_KEY or ANTHROPIC_API_KEY or _config_module.openai_compatible_providers_configured())
+
+    @staticmethod
+    def reserve(db, user, question, prompt):
+        """(None, hold) when the spend is allowed, else (error response, None). Same ledger as SQL generation."""
+        limit_cents = DAILY_LLM_BUDGET_CENTS * plan_budget_multiplier(user.plan)
+        outcome, hold = _reserve_ai_budget(db, user.id, _estimate_cost_cents_pre_call(question, {"retrieved_context_text": prompt}), limit_cents)
+        if outcome == "global_exceeded":
+            obs_metrics.record_ai_budget_denied("global")
+            return _global_budget_response(), None
+        if outcome == "user_exceeded":
+            obs_metrics.record_ai_budget_denied("user")
+            return err_response(f"Daily AI usage budget of ${limit_cents / 100:.2f} reached for your account. This resets at midnight UTC.",
+                                code=429, error_code="BUDGET_EXCEEDED"), None
+        return None, hold
+
+    @staticmethod
+    def settle(db, user_id, hold, cents, count_request):
+        return _settle_ai_budget_safely(db, user_id, hold, cents, count_request=count_request)
+
+    @staticmethod
+    def run(system_prompt, user_prompt, api_key, task="knowledge_answer"):
+        from modules import sql_generator as _sg
+        with _ai_router.task_scope(task):
+            return _sg._run_provider_chain(system_prompt, user_prompt, api_key)
+
+
+app.include_router(_knowledge_api.build_router(limiter, ai=_KnowledgeAI, stream_to_disk=_stream_upload_to_disk,
+                                               multipart_overhead=_MULTIPART_OVERHEAD_BYTES, upload_dir=lambda: UPLOAD_DIR))
+app.include_router(_conversation_api.build_router(limiter, ai=_KnowledgeAI))
+app.include_router(_agent_api.build_router(limiter, ai=_KnowledgeAI))
+app.include_router(_investigation_api.build_router(limiter))
+app.include_router(_governance_api.build_router())
+app.include_router(_dataset_api.build_router(limiter, upload_limits=UPLOAD_SIZE_LIMITS, stream_to_disk=_stream_upload_to_disk,
+                                             multipart_overhead=_MULTIPART_OVERHEAD_BYTES, upload_dir=lambda: UPLOAD_DIR))
 
 
 @app.get("/ops", include_in_schema=False)

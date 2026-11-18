@@ -28,6 +28,7 @@ from auth import get_current_user
 from db import User, get_db
 from observability import alerts, errors, events, gauges, health, metrics as m, slo
 from observability.store import get_store, iter_prom_lines
+from ai import providers as _ai_providers
 
 logger = logging.getLogger("querysure.ops")
 router = APIRouter(prefix="/api/admin/ops", tags=["ops"])
@@ -156,6 +157,13 @@ def ops_providers(window_minutes: int = 60, limit: int = 50, admin: User = Depen
         "success": True, "window_minutes": window,
         "order": list(config.LLM_PROVIDER_ORDER),
         "chain": describe_provider_chain(config.GROQ_API_KEY),
+        # Sprint 2: the chain each AI task actually uses (AI_TASK_ROUTES; unrouted tasks use the order above), and how each
+        # provider is asked for structured output. Configuration only -- no keys, no user data.
+        "task_routes": {task: {"routed": bool(config.AI_TASK_ROUTES.get(task)),
+                               "chain": describe_provider_chain(config.GROQ_API_KEY, task=task)}
+                        for task in config.AI_TASKS},
+        "provider_capabilities": {name: {"label": p["label"], "structured_output": p["structured_output"]}
+                                  for name, p in _ai_providers.PROVIDERS.items()},
         "settings": {"transient_retries": config.LLM_TRANSIENT_RETRIES,
                      "retry_backoff_seconds": config.LLM_RETRY_BACKOFF_SECONDS,
                      "max_attempts_per_request": config.LLM_MAX_ATTEMPTS_PER_REQUEST,

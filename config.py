@@ -19,7 +19,6 @@ anywhere without circular-import risk.
 
 from __future__ import annotations
 
-import logging
 import os
 
 # ---------------------------------------------------------------------------
@@ -60,6 +59,7 @@ MAX_UPLOAD_MB = max(1, _env_number("MAX_UPLOAD_MB", 10))
 # Excel parsing is far slower than CSV (openpyxl XML parsing): on a 0.1-CPU instance a 1 MB workbook took ~6 minutes and a 2 MB
 # one ~11 minutes. This lowers the Excel limit separately (the lower of the two applies); render.yaml sets 2 for the free plan.
 MAX_UPLOAD_XLSX_MB = max(1, _env_number("MAX_UPLOAD_XLSX_MB", MAX_UPLOAD_MB))
+MAX_UPLOAD_PARQUET_MB = max(1, _env_number("MAX_UPLOAD_PARQUET_MB", MAX_UPLOAD_MB))
 MAX_XLSX_COMPRESSION_RATIO = max(1.0, _env_number("MAX_XLSX_COMPRESSION_RATIO", 100, float))
 CSP_REPORT_ONLY = os.environ.get("CSP_REPORT_ONLY", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -252,6 +252,12 @@ CORS_ALLOW_CREDENTIALS = "*" not in CORS_ALLOWED_ORIGINS
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# Sprint 2 (AI provider layer): Google Gemini and xAI Grok through their OpenAI-compatible endpoints. Both stay OFF unless
+# a key AND a model id are set: no model is assumed to exist, so there is deliberately no default model.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "").strip()
+XAI_API_KEY = os.environ.get("XAI_API_KEY", "")
+XAI_MODEL = os.environ.get("XAI_MODEL", "").strip()
 
 DAILY_LLM_BUDGET_USD = float(os.environ.get("DAILY_LLM_BUDGET_USD", "2.00"))
 # Kept as a float, not rounded to whole cents: a single request's estimated
@@ -283,7 +289,7 @@ LOW_RETRIEVAL_CONFIDENCE = max(0.0, min(1.0, _env_number("LOW_RETRIEVAL_CONFIDEN
 # Cross-provider fallback (v1.0.3). Order in which configured providers are tried; unknown names are ignored, providers
 # without an API key are skipped. Model IDs above are NOT assumed to exist: an invalid/retired model returns a
 # non-retryable "model_not_found"/"bad_request" and the chain moves on. Set a *_MODEL / *_FALLBACK_MODEL to "" to drop it.
-_KNOWN_LLM_PROVIDERS = ("groq", "openai", "anthropic")
+_KNOWN_LLM_PROVIDERS = ("groq", "openai", "anthropic", "gemini", "xai")
 LLM_PROVIDER_ORDER = [p for p in dict.fromkeys(
     x.strip().lower() for x in os.environ.get("LLM_PROVIDER_ORDER", "groq,openai,anthropic").split(",")
 ) if p in _KNOWN_LLM_PROVIDERS] or list(_KNOWN_LLM_PROVIDERS)
@@ -293,6 +299,41 @@ LLM_TRANSIENT_RETRIES = max(0, min(3, int(os.environ.get("LLM_TRANSIENT_RETRIES"
 LLM_RETRY_BACKOFF_SECONDS = max(0.0, min(5.0, float(os.environ.get("LLM_RETRY_BACKOFF_SECONDS", "0.5") or 0.5)))
 # Hard cap on provider calls for ONE generate-sql request, shared by every fallback, JSON retry and repair round.
 LLM_MAX_ATTEMPTS_PER_REQUEST = max(1, min(30, int(os.environ.get("LLM_MAX_ATTEMPTS_PER_REQUEST", "8") or 8)))
+
+# Per-task routing (Sprint 2). Empty = every task uses LLM_PROVIDER_ORDER. Otherwise ``task=provider[:model],...`` entries
+# separated by ";", e.g. "sql_repair=openai:gpt-4.1-mini,groq". A routed task tries ONLY the listed providers, in order;
+# a listed provider without a key is skipped. Unknown task or provider names fail at startup rather than being ignored.
+AI_TASKS = ("sql_generation", "sql_repair", "knowledge_answer", "agent_plan")
+
+
+def _parse_task_routes(raw: str) -> dict:
+    routes: dict = {}
+    for part in (raw or "").split(";"):
+        if not part.strip():
+            continue
+        task, sep, targets = part.partition("=")
+        task = task.strip().lower()
+        if not sep or task not in AI_TASKS:
+            raise RuntimeError(f"AI_TASK_ROUTES: unknown task {task!r} (known: {', '.join(AI_TASKS)})")
+        items = []
+        for target in targets.split(","):
+            provider, _, model = target.strip().partition(":")
+            provider = provider.strip().lower()
+            if provider not in _KNOWN_LLM_PROVIDERS:
+                raise RuntimeError(f"AI_TASK_ROUTES: unknown provider {provider!r} for task {task!r}")
+            items.append((provider, model.strip()))
+        if not items:
+            raise RuntimeError(f"AI_TASK_ROUTES: task {task!r} lists no provider")
+        routes[task] = items
+    return routes
+
+
+AI_TASK_ROUTES = _parse_task_routes(os.environ.get("AI_TASK_ROUTES", ""))
+
+
+def openai_compatible_providers_configured() -> bool:
+    """Gemini / xAI count as configured only with BOTH a key and a model id (neither has a default model)."""
+    return bool((GEMINI_API_KEY.strip() and GEMINI_MODEL) or (XAI_API_KEY.strip() and XAI_MODEL))
 
 
 # ---------------------------------------------------------------------------
@@ -561,3 +602,79 @@ if IS_PRODUCTION and PAYMENT_PROVIDER:
         raise RuntimeError("PAYMENT_CHECKOUT_URL must use HTTPS in production.")
     if PAYMENT_PORTAL_URL and not PAYMENT_PORTAL_URL.startswith("https://"):
         raise RuntimeError("PAYMENT_PORTAL_URL must use HTTPS in production.")
+
+
+# ---------------------------------------------------------------------------
+# Source connections (Sprint 4): PostgreSQL / MySQL
+# ---------------------------------------------------------------------------
+# Saved connection passwords are encrypted (Fernet). One key, or several comma-separated for rotation: the FIRST encrypts, every
+# key decrypts. Without it, connections cannot be created or used in production (the app itself still starts); in development a
+# key is derived from JWT_SECRET_KEY so local use needs no setup. Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+CONNECTIONS_ENCRYPTION_KEYS = [k.strip() for k in os.environ.get("CONNECTIONS_ENCRYPTION_KEY", "").split(",") if k.strip()]
+# Outbound database connections to private, loopback, link-local or otherwise non-public addresses are refused unless this is on
+# (default: on in development so local databases work, off in production so the server cannot be pointed at internal services).
+CONNECTOR_ALLOW_PRIVATE_HOSTS = _env_flag("CONNECTOR_ALLOW_PRIVATE_HOSTS", not IS_PRODUCTION)
+CONNECTION_TIMEOUT_SECONDS = max(1.0, min(60.0, _env_number("CONNECTION_TIMEOUT_SECONDS", 10, float)))
+CONNECTION_QUERY_TIMEOUT_SECONDS = max(1, min(600, int(_env_number("CONNECTION_QUERY_TIMEOUT_SECONDS", 60))))
+CONNECTION_SYNC_MAX_SECONDS = max(30, min(3600, int(_env_number("CONNECTION_SYNC_MAX_SECONDS", 900))))
+CONNECTION_FETCH_BATCH_ROWS = max(100, min(50000, int(_env_number("CONNECTION_FETCH_BATCH_ROWS", 5000))))
+# Incremental timestamp syncs re-read this many seconds before the stored watermark, so rows committed late are not missed;
+# upserts by primary key make the re-read idempotent.
+INCREMENTAL_OVERLAP_SECONDS = max(0, min(86400, int(_env_number("INCREMENTAL_OVERLAP_SECONDS", 300))))
+
+
+# ---------------------------------------------------------------------------
+# REST / S3 sources and the scheduler (Sprint 5)
+# ---------------------------------------------------------------------------
+SOURCE_MAX_PAGES = max(1, min(5000, int(_env_number("SOURCE_MAX_PAGES", 500))))              # REST pages per run
+SOURCE_MAX_RESPONSE_MB = max(1, min(100, int(_env_number("SOURCE_MAX_RESPONSE_MB", 5))))      # one REST response body
+S3_SOURCE_MAX_OBJECTS = max(1, min(5000, int(_env_number("S3_SOURCE_MAX_OBJECTS", 200))))     # objects per dataset
+S3_SOURCE_MAX_OBJECT_MB = max(1, int(_env_number("S3_SOURCE_MAX_OBJECT_MB", MAX_UPLOAD_MB)))  # one object (same ceiling as an upload)
+S3_SOURCE_MAX_TOTAL_MB = max(1, int(_env_number("S3_SOURCE_MAX_TOTAL_MB", 50)))               # all objects read in one run
+# Scheduler: a separate always-on process (python scheduler.py, the compose `scheduler` service) or, for development, a thread in
+# the API process. Not available on Render's free plan, which sleeps and has no background process.
+SCHEDULER_ENABLED = _env_flag("SCHEDULER_ENABLED", False)
+SCHEDULER_TICK_SECONDS = max(1, min(600, int(_env_number("SCHEDULER_TICK_SECONDS", 30))))
+SCHEDULER_MIN_INTERVAL_MINUTES = max(1, min(1440, int(_env_number("SCHEDULER_MIN_INTERVAL_MINUTES", 5))))
+SCHEDULER_MAX_CONSECUTIVE_FAILURES = max(1, min(100, int(_env_number("SCHEDULER_MAX_CONSECUTIVE_FAILURES", 5))))
+
+# --- Sprint 6: data quality ---------------------------------------------------------------------------------------------
+QUALITY_ENABLED = _env_flag("QUALITY_ENABLED", True)
+QUALITY_ROW_DROP_PCT = max(1, min(100, int(_env_number("QUALITY_ROW_DROP_PCT", 50))))            # warn when rows fall this much vs the previous version
+QUALITY_NULL_SPIKE_POINTS = max(1, min(100, int(_env_number("QUALITY_NULL_SPIKE_POINTS", 20))))  # warn when a column's null share rises this many points
+QUALITY_REJECT_WARN_PCT = max(0, min(100, int(_env_number("QUALITY_REJECT_WARN_PCT", 5))))
+QUALITY_REJECT_ERROR_PCT = max(0, min(100, int(_env_number("QUALITY_REJECT_ERROR_PCT", 20))))
+QUALITY_DUPLICATE_WARN_PCT = max(0, min(100, int(_env_number("QUALITY_DUPLICATE_WARN_PCT", 5))))
+QUALITY_NUMERIC_SHIFT_PCT = max(1, int(_env_number("QUALITY_NUMERIC_SHIFT_PCT", 50)))           # warn when a numeric column's mean moves this much
+QUALITY_DISTINCT_MAX_ROWS = max(1000, int(_env_number("QUALITY_DISTINCT_MAX_ROWS", 2_000_000)))  # skip COUNT(DISTINCT) on bigger tables
+QUALITY_REPORTS_KEEP = max(5, min(500, int(_env_number("QUALITY_REPORTS_KEEP", 30))))
+
+# --- Sprint 7: knowledge hub ----------------------------------------------------------------------------------------------
+KNOWLEDGE_MAX_FILE_MB = max(1, min(50, int(_env_number("KNOWLEDGE_MAX_FILE_MB", 10))))
+KNOWLEDGE_MAX_DOCS_PER_WORKSPACE = max(1, min(5000, int(_env_number("KNOWLEDGE_MAX_DOCS_PER_WORKSPACE", 200))))
+KNOWLEDGE_MAX_CHUNKS_PER_DOC = max(10, min(20000, int(_env_number("KNOWLEDGE_MAX_CHUNKS_PER_DOC", 3000))))
+KNOWLEDGE_MAX_PDF_PAGES = max(1, min(2000, int(_env_number("KNOWLEDGE_MAX_PDF_PAGES", 500))))
+KNOWLEDGE_CHUNK_CHARS = max(300, min(4000, int(_env_number("KNOWLEDGE_CHUNK_CHARS", 900))))
+KNOWLEDGE_CHUNK_OVERLAP = max(0, min(500, int(_env_number("KNOWLEDGE_CHUNK_OVERLAP", 120))))
+KNOWLEDGE_TOP_K = max(1, min(20, int(_env_number("KNOWLEDGE_TOP_K", 6))))
+KNOWLEDGE_MIN_SCORE = max(0.0, min(1.0, float(_env_number("KNOWLEDGE_MIN_SCORE", 0.08, float))))   # cosine floor: below it nothing is "relevant"
+KNOWLEDGE_SEARCH_MAX_CHUNKS = max(100, int(_env_number("KNOWLEDGE_SEARCH_MAX_CHUNKS", 25000)))      # passages one workspace may hold and search covers (raised only after measuring: docs/baseline/performance.txt)
+KNOWLEDGE_INDEX_CACHE_WORKSPACES = max(1, int(_env_number("KNOWLEDGE_INDEX_CACHE_WORKSPACES", 4)))   # workspaces whose search index stays in memory per process (LRU)
+
+# --- Sprint 8: assistant conversations ------------------------------------------------------------------------------------
+CONVERSATIONS_MAX_PER_USER_WORKSPACE = max(1, min(1000, int(_env_number("CONVERSATIONS_MAX_PER_USER_WORKSPACE", 100))))
+CONVERSATION_MAX_MESSAGES = max(2, min(2000, int(_env_number("CONVERSATION_MAX_MESSAGES", 200))))
+CONVERSATION_HISTORY_TURNS = max(0, min(20, int(_env_number("CONVERSATION_HISTORY_TURNS", 6))))   # previous messages sent as follow-up context
+
+# --- Sprint 9: controlled agent -------------------------------------------------------------------------------------------
+AGENT_ENABLED = _env_flag("AGENT_ENABLED", True)
+AGENT_MAX_STEPS = max(1, min(12, int(_env_number("AGENT_MAX_STEPS", 6))))
+AGENT_GOAL_MAX_CHARS = max(50, min(4000, int(_env_number("AGENT_GOAL_MAX_CHARS", 1000))))
+AGENT_APPROVAL_TTL_HOURS = max(1, min(168, int(_env_number("AGENT_APPROVAL_TTL_HOURS", 24))))   # a waiting approval expires after this
+AGENT_RUNS_KEEP = max(10, min(1000, int(_env_number("AGENT_RUNS_KEEP", 100))))                  # runs kept per user and workspace
+
+# --- Sprint 10: investigations -------------------------------------------------------------------------------------------
+INVESTIGATION_MAX_ROWS = max(100, min(100000, int(_env_number("INVESTIGATION_MAX_ROWS", 5000))))
+INVESTIGATION_QUERY_TIMEOUT_SECONDS = max(1, min(120, int(_env_number("INVESTIGATION_QUERY_TIMEOUT_SECONDS", 15))))
+INVESTIGATION_MAX_TABLE_ROWS = max(1000, int(_env_number("INVESTIGATION_MAX_TABLE_ROWS", 500000)))   # larger tables are refused (a run scans the table several times; ~4.7 s per 200,000 rows)
+INVESTIGATIONS_KEEP = max(5, min(500, int(_env_number("INVESTIGATIONS_KEEP", 50))))     # per dataset; older ones are deleted

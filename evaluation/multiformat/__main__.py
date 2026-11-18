@@ -1,4 +1,5 @@
-"""python -m evaluation.multiformat [--data DIR] [--only ID_PREFIX] [--json OUT.json] [--holdout] [--live --yes | --replay LIVE.json]"""
+"""python -m evaluation.multiformat [--data DIR] [--only ID_PREFIX] [--json OUT.json] [--holdout] [--live --yes | --replay LIVE.json]
+                                [--live --yes --compare PROVIDER[:MODEL] --compare PROVIDER[:MODEL] ...]"""
 from __future__ import annotations
 
 import argparse
@@ -19,6 +20,8 @@ def main(argv=None) -> int:
     p.add_argument("--delay", type=float, default=0.0, help="seconds to wait between live questions (rate limits)")
     p.add_argument("--replay", help="re-check the model SQL recorded in an earlier --live --json report (no LLM calls)")
     p.add_argument("--negatives", action="store_true", help="score deliberately wrong SQL (detection rate) instead")
+    p.add_argument("--compare", action="append", metavar="PROVIDER[:MODEL]",
+                   help="live side-by-side model evaluation: repeat for each route (needs --live --yes; each route spends credits)")
     a = p.parse_args(argv)
     if a.negatives:
         from .runner import run_negatives
@@ -37,6 +40,21 @@ def main(argv=None) -> int:
             return 1
         from ..cli import load_llm_env_from_dotenv
         load_llm_env_from_dotenv()             # LLM variables only, before config is imported
+    if a.compare:
+        if not (a.live and a.yes):
+            print("error: --compare runs live models; add --live --yes.", file=sys.stderr)
+            return 1
+        from .runner import compare, render_comparison
+        try:
+            cmp = compare(a.compare, a.data, a.only, holdout=a.holdout, delay_seconds=a.delay)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(render_comparison(cmp))
+        if a.json:
+            with open(a.json, "w", encoding="utf-8") as fh:
+                json.dump(cmp, fh, indent=2, default=str)
+        return 0
     replay = None
     if a.replay:
         with open(a.replay, encoding="utf-8") as fh:

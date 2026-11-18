@@ -28,10 +28,8 @@ import config
 from config import REDIS_URL, IS_PRODUCTION, JOB_STALE_SECONDS
 from observability import context as obs_context, errors as obs_errors, events as obs_events, gauges as obs_gauges
 from observability import metrics as obs_metrics
-from db import Job, PipelineSession, SessionLocal, SessionConflictError, get_or_create_session, update_session
+from db import Job, PipelineSession, SessionLocal, get_or_create_session, update_session
 from modules import load_database, build_semantic_layer, build_vector_store, clear_cache_key, generate_report
-from modules.ingestion import ingest_to_sqlite
-from modules.schema_engine import SchemaTooLarge
 
 QUEUE_NAME = "querysure"
 MAX_ATTEMPTS = 3
@@ -84,67 +82,166 @@ def _cleanup_superseded(db, old_ref, new_ref, session_id):
     if db.query(PipelineSession.id).filter(PipelineSession.db_path == old_ref, PipelineSession.id != session_id).first():
         return
     storage.delete_dataset(old_ref)
+    import workspaces
+    workspaces.forget_storage_ref(db, old_ref)
+
+
+_FILE_FORMATS = {".csv": "csv", ".json": "json", ".xlsx": "xlsx", ".xlsm": "xlsm",
+                 ".db": "sqlite", ".sqlite": "sqlite", ".sqlite3": "sqlite"}
+
+
+def _run_connection_sync(db, job, payload):
+    """Import (or incrementally sync) one table from a saved database connection (ingest_db.py)."""
+    import audit
+    import ingest_db
+    import ingest_records
+    import quotas
+    from connectors import registry
+    from db import Connection, Dataset, User
+    user = db.get(User, job.user_id)
+    connection = db.get(Connection, payload["connection_id"])
+    dataset_id = payload.get("dataset_id")
+    workspace_id = payload["workspace_id"]
+    if connection is None:
+        raise ValueError("The connection no longer exists.")
+    dataset = db.get(Dataset, dataset_id) if dataset_id else None
+    if dataset_id and dataset is None:
+        raise ValueError("Dataset not found.")
+
+    def abort():
+        if _abandoned(db, job):
+            raise JobAbandoned()
+
+    def quota_check(new_bytes, target):
+        creator = db.get(User, target.created_by) or user
+        try:
+            quotas.check_dataset_replacement(db, creator, new_bytes, target.id)
+        except quotas.QuotaExceeded as exc:
+            import ingest
+            raise ingest.IngestQuota(exc.message) from exc
+
+    audit.record(workspace_id, "ingestion.start", actor_id=job.user_id, target_type="dataset", target_id=dataset_id,
+                 details={"kind": payload["mode"], "dataset_id": dataset_id})
+    pipeline = ingest_records.sync if getattr(registry.source(connection.connector), "pipeline", "keyset") != "keyset" else ingest_db.sync
+    try:
+        res = pipeline(db, user=user, workspace_id=workspace_id, connection=connection, table_name=payload["table"],
+                             requested_mode=payload["mode"], dataset=dataset, watermark_column=payload.get("watermark_column"),
+                             name=payload.get("name"), job_id=job.id, abort=abort, quota_check=quota_check)
+    except JobAbandoned:
+        raise
+    except Exception as exc:
+        audit.record(workspace_id, "ingestion.fail", actor_id=job.user_id, target_type="dataset", target_id=dataset_id,
+                     details={"error_code": getattr(exc, "code", None) or "IMPORT_FAILED"})
+        raise
+    ds, run = res.dataset, res.run
+    audit.record(ds.workspace_id, "ingestion.finish", actor_id=job.user_id, target_type="dataset", target_id=ds.id,
+                 details={"run_id": run.id, "connector": run.connector, "dataset_id": ds.id, "inserted": run.records_inserted,
+                          "updated": run.records_updated, "skipped": run.records_skipped, "rejected": run.records_rejected,
+                          "mode": run.mode, "fallback_reason": run.fallback_reason, "status": run.status, "version": ds.version})
+    if run.schema_changes:
+        audit.record(ds.workspace_id, "ingestion.schema_change", actor_id=job.user_id, target_type="dataset", target_id=ds.id,
+                     details={"run_id": run.id, "schema_changes": len(run.schema_changes)})
+    if not dataset_id:
+        audit.record(ds.workspace_id, "dataset.upload", actor_id=job.user_id, target_type="dataset", target_id=ds.id,
+                     details={"format": ds.file_format, "tables": ds.table_count, "rows": ds.row_count, "bytes": ds.bytes})
+    return {"dataset_id": ds.id, "workspace_id": ds.workspace_id, "run_id": run.id, "run_status": run.status, "mode": run.mode,
+            "fallback_reason": run.fallback_reason, "records_read": run.records_read, "records_inserted": run.records_inserted,
+            "records_updated": run.records_updated, "records_skipped": run.records_skipped,
+            "records_rejected": run.records_rejected}
 
 
 def _run_upload(db, job, payload):
-    object_ref = payload["object_ref"]
-    ext = payload["ext"]
-    fname = payload["fname"]
-    session_id = payload["session_id"]
-    user_id = job.user_id
+    """Import an uploaded source through the layered pipeline (ingest.py): a new dataset (optionally linked to the uploading
+    session) or, with ``dataset_id`` in the payload, a new version of an existing one. The session link is the last step: a
+    failure there leaves a valid, openable dataset behind, never a half-imported one."""
+    if payload.get("connection_id"):
+        return _run_connection_sync(db, job, payload)
+    import audit
+    import ingest
+    import workspaces
+    from db import Dataset, IngestionRun, User
+    ext, fname = payload["ext"], payload["fname"]
+    session_id, dataset_id = payload.get("session_id"), payload.get("dataset_id")
+    user = db.get(User, job.user_id)
+    workspace_id = payload.get("workspace_id") or workspaces.personal_workspace_id(job.user_id)
+    saved = json.loads(job.result_ref) if job.result_ref else {}
     raw_path = None
-    path = None
-    db_ref = None
-    dataset_bytes = None
     try:
-        if job.result_ref:
-            saved = json.loads(job.result_ref)
-            db_ref = saved.get("db_ref")
-        if db_ref:
-            path = storage.ensure_local(db_ref, user_id)
-            dataset_bytes = os.path.getsize(path)
-            schema = load_database(path)
+        ds = db.get(Dataset, saved["dataset_id"]) if saved.get("dataset_id") else None
+        if ds is None or ds.status != "ready":
+            audit.record(workspace_id, "ingestion.start", actor_id=job.user_id, target_type="dataset", target_id=dataset_id,
+                         details={"kind": "reimport" if dataset_id else "new", "dataset_id": dataset_id})
+            raw_path = storage.ensure_staged_local(payload["object_ref"], job.user_id, ext)
+
+            def abort():
+                if _abandoned(db, job):
+                    raise JobAbandoned()
+
+            def quota_check(new_bytes, target):
+                import quotas
+                creator = db.get(User, target.created_by) or user
+                try:
+                    quotas.check_dataset_replacement(db, creator, new_bytes, target.id)
+                except quotas.QuotaExceeded as exc:
+                    raise ingest.IngestQuota(exc.message) from exc
+
+            try:
+                res = ingest.import_source(db, user=user, workspace_id=workspace_id, dataset_id=dataset_id, raw_path=raw_path,
+                                           ext=ext, fname=fname, job_id=job.id, abort=abort,
+                                           quota_check=quota_check if dataset_id else None)
+            except JobAbandoned:
+                raise
+            except Exception as exc:
+                audit.record(workspace_id, "ingestion.fail", actor_id=job.user_id, target_type="dataset", target_id=dataset_id,
+                             details={"error_code": getattr(exc, "code", None) or ("INVALID_SOURCE" if isinstance(exc, ValueError)
+                                                                                   else "IMPORT_FAILED")})
+                raise
+            ds, run = res.dataset, res.run
+            _update_job(db, job, result_ref=json.dumps({"dataset_id": ds.id, "run_id": run.id}, separators=(",", ":")))
+            ev = {"run_id": run.id, "connector": run.connector, "dataset_id": ds.id, "inserted": run.records_inserted,
+                  "rejected": run.records_rejected, "status": run.status, "version": ds.version}
+            audit.record(ds.workspace_id, "ingestion.finish", actor_id=job.user_id, target_type="dataset", target_id=ds.id, details=ev)
+            if run.schema_changes:
+                audit.record(ds.workspace_id, "ingestion.schema_change", actor_id=job.user_id, target_type="dataset",
+                             target_id=ds.id, details={"run_id": run.id, "schema_changes": len(run.schema_changes)})
+            if not dataset_id:
+                audit.record(ds.workspace_id, "dataset.upload", actor_id=job.user_id, target_type="dataset", target_id=ds.id,
+                             details={"format": ds.file_format, "tables": ds.table_count, "rows": ds.row_count, "bytes": ds.bytes,
+                                      "session_id": session_id})
+        run = (db.query(IngestionRun).filter(IngestionRun.id == saved["run_id"]).first() if saved.get("run_id") else None) or \
+            db.query(IngestionRun).filter(IngestionRun.dataset_id == ds.id).order_by(IngestionRun.started_at.desc()).first()
+        result = {"dataset_id": ds.id, "workspace_id": ds.workspace_id, "run_id": run.id if run else None,
+                  "run_status": run.status if run else None, "records_read": run.records_read if run else None,
+                  "records_rejected": run.records_rejected if run else None}
+        if not session_id:
+            return result
+        try:
+            row = get_or_create_session(db, job.user_id, session_id)
+            old_ref = row.db_path
+            schema = load_database(storage.ensure_local_workspace(ds.storage_ref))
             semantic = build_semantic_layer(schema)
-            build_vector_store(semantic, cache_key=session_id)
-        else:
-            raw_path = storage.ensure_staged_local(object_ref, user_id, ext)
-            path = raw_path if ext in {".db", ".sqlite", ".sqlite3"} else os.path.join(storage.UPLOAD_DIR, f".job-{uuid.uuid4().hex}.db")
-            if ext in {".db", ".sqlite", ".sqlite3"}:
-                from modules.ingestion import validate_sqlite
-                validate_sqlite(raw_path)
-            else:
-                ingest_to_sqlite(raw_path, ext, path, os.path.splitext(fname)[0])
-            row = get_or_create_session(db, user_id, session_id)
-            schema = load_database(path)
-            semantic = build_semantic_layer(schema)
+            clear_cache_key(row.id)
             build_vector_store(semantic, cache_key=row.id)
-            dataset_bytes = os.path.getsize(path)
-            db_ref = storage.store_dataset(path, user_id)
-            if _abandoned(db, job):
-                storage.delete_dataset(db_ref)
-                raise JobAbandoned()
-            _update_job(db, job, result_ref=json.dumps({"db_ref": db_ref}, separators=(",", ":")))
-        if _abandoned(db, job):
-            raise JobAbandoned()
-        row = get_or_create_session(db, user_id, session_id)
-        old_ref = row.db_path
-        clear_cache_key(row.id)
-        row = update_session(db, row, db_path=db_ref, dataset_bytes=dataset_bytes, schema=schema, semantic=semantic,
-                             retrieval=None, sql=None, sql_result=None, question=None,
-                             validation=None, query_result=None, reliability=None, insights=None)
-        _cleanup_superseded(db, old_ref, db_ref, row.id)
+            row = update_session(db, row, db_path=ds.storage_ref, dataset_bytes=None, dataset_id=ds.id, dataset_version=ds.version,
+                                 schema=schema, semantic=semantic, retrieval=None, sql=None, sql_result=None, question=None,
+                                 validation=None, query_result=None, reliability=None, insights=None)
+        except Exception:
+            db.rollback()
+            if not dataset_id:   # the user is told this upload failed: do not leave its dataset behind, unseen and counted
+                try:
+                    storage.delete_workspace_tree(ds.storage_ref)
+                    ingest.discard_dataset_row(db, ds)
+                except Exception:  # noqa: BLE001 - the original failure is what matters
+                    db.rollback()
+            raise
+        _cleanup_superseded(db, old_ref, ds.storage_ref, row.id)
         return {"session_id": row.id, "db_name": fname, "table_count": schema["table_count"],
                 "total_rows": schema["total_rows"], "relationships": len(schema["relationships"]),
                 "db_size": schema["db_size"], "tables": _schema_summary(schema),
-                "health_score": _calc_health(schema)}
+                "health_score": _calc_health(schema), **result}
     finally:
-        # Local backend + SQLite upload: the staged file *is* the stored dataset (db_ref == raw_path).
-        # Deleting it would orphan the session's db_path and produce DATASET_UNAVAILABLE (410).
-        if raw_path and raw_path != db_ref and os.path.exists(raw_path):
+        if raw_path and os.path.exists(raw_path):
             try: os.remove(raw_path)
-            except OSError: pass
-        if path and path != raw_path and path != db_ref and os.path.exists(path):
-            try: os.remove(path)
             except OSError: pass
 
 
@@ -207,7 +304,22 @@ def _run_report(db, job, payload):
     result["report_ids"] = {r.kind: r.id for r in created}
     result["report_id"] = result["report_ids"].get("json") or (created[0].id if created else None)
     _update_job(db, job, result_ref=json.dumps(result, separators=(",", ":")))
+    _audit_report(db, job.user_id, row, result["report_id"], len(created))
     return result
+
+
+def _audit_report(db, user_id, row, report_id, artifact_count):
+    """Audit a generated report in the workspace that catalogs the session's dataset (personal otherwise)."""
+    try:
+        import audit
+        import workspaces
+        from db import Dataset
+        ds = db.get(Dataset, row.dataset_id) if row.dataset_id else None
+        ws_id = ds.workspace_id if ds is not None else workspaces.personal_workspace_id(user_id)
+        audit.record(ws_id, "report.create", actor_id=user_id, target_type="report", target_id=report_id,
+                     details={"count": artifact_count, "session_id": row.id, "dataset_id": ds.id if ds is not None else None})
+    except Exception as exc:  # noqa: BLE001 - auditing must never fail a report
+        logger.warning("report audit failed: %s", type(exc).__name__)
 
 
 def _run_email(db, job, payload):
@@ -222,20 +334,6 @@ def _dispatch(db, job, payload):
     if job.kind == "report_generation": return _run_report(db, job, payload)
     if job.kind == "auth_email": return _run_email(db, job, payload)
     raise ValueError("Unsupported job kind")
-
-
-def execute_job(job_id: str):
-    db = SessionLocal()
-    try:
-        job = db.query(Job).filter(Job.id == job_id).first()
-        if not job or job.status == "succeeded":
-            return
-        payload = json.loads(job.result_ref) if job.kind == "_payload" and job.result_ref else None
-        # Payloads are stored in Redis job args, while result_ref remains the result field.
-        # This branch is intentionally unused; execute_job receives payload through a private cache below.
-    finally:
-        db.close()
-    raise RuntimeError("execute_job must be invoked through _execute_job")
 
 
 def _aware(value):
@@ -547,7 +645,8 @@ def fail_orphaned_jobs(db, job_id: str | None = None, now=None) -> int:
         q = q.filter(Job.id == job_id)
     if mine:
         q = q.filter(~Job.id.in_(mine))
-    kinds = [k for (k,) in q.with_entities(Job.kind).all()]
+    found = q.with_entities(Job.id, Job.kind).all()
+    kinds = [k for _, k in found]
     if not kinds:
         return 0
     n = q.update({Job.status: "failed", Job.error_code: INTERRUPTED_ERROR_CODE,
@@ -556,5 +655,10 @@ def fail_orphaned_jobs(db, job_id: str | None = None, now=None) -> int:
     db.commit()
     for kind in kinds[:n]:
         obs_metrics.record_job(kind, "failed")
+    try:  # a run whose job died is interrupted now, which frees the dataset for the next import
+        import ingest
+        ingest.mark_runs_interrupted(db, [i for i, k in found if k == "dataset_ingestion"])
+    except Exception:  # noqa: BLE001
+        db.rollback()
     logger.warning("orphaned jobs failed", extra={"event": "jobs_interrupted", "count": n})
     return n

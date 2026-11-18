@@ -303,7 +303,7 @@ def test_switching_dataset_clears_the_previous_answer_and_locks_ask():
     fail = upload.index("Upload failed'); showGlobalError")
     activate = upload.index("onDatasetActivated()")
     assert activate > fail, "a failed upload must return before anything is activated"
-    assert re.search(r"async function uploadFile\(file\) \{[^}]*setPipelineBusy\(true\)", app)
+    assert re.search(r"async function uploadFile\(file(?:, opts)?\) \{[^}]*setPipelineBusy\(true\)", app)
     assert re.search(r"async function connectSample\(\) \{[^}]*setPipelineBusy\(true\)", app)
     reset = app[app.index("function resetAnswerState"):app.index("function onDatasetActivated")]
     assert "clearSheet()" in reset and "$('question')" in reset

@@ -1,0 +1,107 @@
+  [  1/62] filter-001   executed            correct
+  [  2/62] filter-002   executed            correct
+  [  3/62] filter-003   executed            correct
+  [  4/62] filter-004   executed            correct
+  [  5/62] filter-005   executed            correct
+  [  6/62] filter-006   executed            correct
+  [  7/62] filter-007   executed            correct
+  [  8/62] agg-001      executed            correct
+  [  9/62] agg-002      executed            correct
+  [ 10/62] agg-003      executed            correct
+  [ 11/62] agg-004      executed            correct
+  [ 12/62] agg-005      executed            correct
+  [ 13/62] agg-006      executed            correct
+  [ 14/62] agg-007      executed            correct
+  [ 15/62] agg-008      executed            correct
+  [ 16/62] grp-001      executed            correct
+  [ 17/62] grp-002      executed            correct
+  [ 18/62] grp-003      executed            correct
+  [ 19/62] grp-004      executed            correct
+  [ 20/62] grp-005      executed            correct
+  [ 21/62] grp-006      executed            correct
+  [ 22/62] join-001     executed            correct
+  [ 23/62] join-002     executed            correct
+  [ 24/62] join-003     executed            correct
+  [ 25/62] join-004     executed            correct
+  [ 26/62] join-005     executed            correct
+  [ 27/62] join-006     executed            correct
+  [ 28/62] join-007     executed            correct
+  [ 29/62] join-008     executed            correct
+  [ 30/62] date-001     executed            correct
+  [ 31/62] date-002     executed            correct
+  [ 32/62] date-003     executed            correct
+  [ 33/62] date-004     executed            correct
+  [ 34/62] date-005     executed            correct
+  [ 35/62] date-006     executed            correct
+  [ 36/62] date-007     executed            correct
+  [ 37/62] date-008     executed            correct
+  [ 38/62] multi-001    executed            correct
+  [ 39/62] multi-002    executed            correct
+  [ 40/62] multi-003    executed            correct
+  [ 41/62] multi-004    executed            correct
+  [ 42/62] multi-005    executed            correct
+  [ 43/62] multi-006    executed            correct
+  [ 44/62] multi-007    executed            correct
+  [ 45/62] amb-001      no_sql              correct
+  [ 46/62] amb-002      no_sql              correct
+  [ 47/62] amb-003      no_sql              correct
+  [ 48/62] amb-004      no_sql              correct
+  [ 49/62] amb-005      no_sql              correct
+  [ 50/62] imp-001      no_sql              correct
+  [ 51/62] imp-002      no_sql              correct
+  [ 52/62] imp-003      no_sql              correct
+  [ 53/62] imp-004      no_sql              correct
+  [ 54/62] imp-005      no_sql              correct
+  [ 55/62] imp-006      no_sql              correct
+  [ 56/62] adv-001      no_sql              correct
+  [ 57/62] adv-002      no_sql              correct
+  [ 58/62] adv-003      no_sql              correct
+  [ 59/62] adv-004      no_sql              correct
+  [ 60/62] adv-005      no_sql              correct
+  [ 61/62] adv-006      no_sql              correct
+  [ 62/62] adv-007      no_sql              correct
+============================================================================================
+QuerySure evaluation  |  mode=oracle  source=oracle  |  62/62 cases
+============================================================================================
+  ! Offline source 'oracle': no LLM was called. These numbers describe the harness, the dataset and QuerySure's validation/execution layers -- NOT the quality of any LLM.
+  ! Latency covers retrieval, prompt construction, validation and execution only; it excludes LLM time.
+  ! Oracle mode replays the gold SQL, so a perfect score is expected. It is a self-consistency check of the benchmark and harness, not evidence that QuerySure answers questions well.
+
+  Behavior accuracy (answer right OR decline right)            100.0%   62 cases
+  SQL validity rate                                            100.0%   of 44 answerable
+  Execution success rate                                       100.0%   of 44 answerable
+  Execution accuracy (result-set match)                        100.0%   of 44 answerable
+    ...tolerating extra columns                                100.0%   
+    ...given the query executed                                100.0%   wrong-answer rate isolated
+  Expected-table grounding rate                                100.0%   of 44 answerable
+  Hallucinated table/column - case level                         0.0%   of 44 cases with SQL
+  Hallucinated table/column - identifier level                   0.0%   of identifier references
+  Hallucinations the validator let through                        n/a   of 0 hallucinating
+  Rejection/clarification accuracy (strict)                    100.0%   of 18 should-decline
+  Rejection/clarification accuracy (lenient)                   100.0%   + run-time database errors
+  Answered instead of declining                                  0.0%   the dangerous failure
+  'Low confidence' on correct answers                            0.0%   high = flag is noisy
+  'Low confidence' on wrongly-answered declines                   n/a   high = flag is useful
+  Latency mean / p95                                 11.2 ms / 19.9 ms   excludes LLM time
+
+  Estimated LLM cost: n/a (offline source, no LLM calls)
+
+  By category                 cases   pass    exec-success
+    adversarial                  7   100.0%        n/a
+    aggregation                  8   100.0%     100.0%
+    ambiguous                    5   100.0%        n/a
+    date_time                    8   100.0%     100.0%
+    group_by                     6   100.0%     100.0%
+    impossible                   6   100.0%        n/a
+    joins                        8   100.0%     100.0%
+    multi_step                   7   100.0%     100.0%
+    simple_filtering             7   100.0%     100.0%
+
+  By difficulty               cases   pass
+    easy                        20   100.0%
+    hard                        13   100.0%
+    medium                      29   100.0%
+
+  Outcome distribution: correct=62
+============================================================================================
+

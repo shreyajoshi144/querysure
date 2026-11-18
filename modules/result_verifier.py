@@ -9,8 +9,6 @@ Separates four things the product used to blur together:
 """
 from __future__ import annotations
 
-import math
-import re
 from typing import Any, Dict, List, Optional
 
 import sqlglot
@@ -19,7 +17,7 @@ from sqlglot import exp
 from .query_planner import build_plan, check_sql_against_plan, reference_sql
 from .query_result_engine import execute_query
 from .sql_intent_checker import check_intent
-from .value_grounding import ground_question, nearest_values, norm, value_exists
+from .value_grounding import ground_question, nearest_values, value_exists
 
 
 def _string_filters(sql: str, schema: dict) -> List[Dict[str, str]]:

@@ -208,13 +208,35 @@ def _run_one(case: Case, question: str, ctx: Dict[str, Any], expected) -> Dict[s
         "sql": final_sql if ctx.get("live") else None,
         "provider": gen.get("provider_used") if ctx.get("live") else None,
         "cost_cents": float(((gen.get("usage") or {}).get("cost_cents")) or 0.0) if ctx.get("live") else 0.0,
+        "latency_ms": gen.get("latency_ms") if ctx.get("live") else None,
+        "total_tokens": int(((gen.get("usage") or {}).get("total_tokens")) or 0) if ctx.get("live") else 0,
     }
 
 
+def parse_route(target: str) -> tuple:
+    """``provider`` or ``provider:model`` -> (provider, model). Unknown providers are refused, not ignored."""
+    import config
+    provider, _, model = (target or "").strip().partition(":")
+    provider = provider.strip().lower()
+    if provider not in config._KNOWN_LLM_PROVIDERS:
+        raise ValueError(f"unknown provider {provider!r} (known: {', '.join(config._KNOWN_LLM_PROVIDERS)})")
+    return provider, model.strip()
+
+
 def run(data_dir: Optional[str] = None, only: Optional[str] = None, holdout: bool = False, live: bool = False,
-        delay_seconds: float = 0.0, replay: Optional[Dict[tuple, str]] = None) -> Dict[str, Any]:
+        delay_seconds: float = 0.0, replay: Optional[Dict[tuple, str]] = None, route: Optional[str] = None) -> Dict[str, Any]:
     """``replay`` maps (case id, variant) to SQL a model wrote in an earlier live run: that SQL goes through today's pipeline
-    with no LLM call (repairs get the same SQL back). Runs the provider never answered are left out."""
+    with no LLM call (repairs get the same SQL back). Runs the provider never answered are left out.
+    ``route`` (live only) pins SQL generation AND repair to one ``provider[:model]`` for a side-by-side comparison."""
+    if route is not None:
+        if not live:
+            raise ValueError("route is only meaningful for live runs")
+        from ai import router
+        target = parse_route(route)
+        with router.route_override({"sql_generation": [target], "sql_repair": [target]}):
+            report = run(data_dir, only, holdout, live, delay_seconds, replay)
+        report["route"] = route
+        return report
     src = Sources(resolve_data_dir(data_dir))
     results: List[Dict[str, Any]] = []
     fidelity: Dict[str, Any] = {}
@@ -310,6 +332,48 @@ def run_negatives(data_dir: Optional[str] = None) -> Dict[str, Any]:
             "detected_of_hard": sum(r["detected"] for r in out if not r["detectable"]), "hard": len(out) - len(det), "results": out}
 
 
+def _median(values: List[float]) -> Optional[float]:
+    if not values:
+        return None
+    v = sorted(values)
+    mid = len(v) // 2
+    return float(v[mid]) if len(v) % 2 else (v[mid - 1] + v[mid]) / 2.0
+
+
+def compare(routes: List[str], data_dir: Optional[str] = None, only: Optional[str] = None, holdout: bool = False,
+            delay_seconds: float = 0.0) -> Dict[str, Any]:
+    """Side-by-side model evaluation: the SAME cases, pipeline, validator and scoring for every ``provider[:model]``.
+    Live only (each route spends that provider's credits)."""
+    for r in routes:
+        parse_route(r)
+    reports = {r: run(data_dir, only, holdout, live=True, delay_seconds=delay_seconds, route=r) for r in routes}
+    rows = []
+    for r, rep in reports.items():
+        o = rep["metrics"]["overall"]
+        rows.append({"route": r, "cases": o["cases"], "answered": o["answered_runs"],
+                     "provider_unavailable": o["provider_unavailable"],
+                     "exact_correct_of_answered_pct": o["exact_correct_of_answered_pct"],
+                     "semantic_correct_of_answered_pct": o["semantic_correct_of_answered_pct"],
+                     "clean_pct": o["clean_pct"], "median_latency_ms": o["median_latency_ms"],
+                     "total_tokens": o["total_tokens"], "estimated_cost_usd": o["estimated_cost_usd"]})
+    return {"generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"), "holdout": holdout,
+            "comparison": rows, "reports": reports}
+
+
+def render_comparison(cmp: Dict[str, Any]) -> str:
+    head = f"{'route':42s} {'cases':>5s} {'answered':>8s} {'exact%':>7s} {'semantic%':>9s} {'clean%':>7s} {'p50 ms':>7s} {'tokens':>8s} {'cost $':>8s}"
+    lines = ["QuerySure side-by-side model evaluation (same cases, pipeline and scoring per route; accuracy is over answered runs)",
+             f"set: {'held-out' if cmp['holdout'] else 'tuned'}", "", head, "-" * len(head)]
+    fmt = lambda v, w: f"{'—' if v is None else v:>{w}}"  # noqa: E731
+    for r in cmp["comparison"]:
+        lines.append(f"{r['route'][:42]:42s} {r['cases']:>5d} {r['answered']:>8d} {fmt(r['exact_correct_of_answered_pct'], 7)} "
+                     f"{fmt(r['semantic_correct_of_answered_pct'], 9)} {fmt(r['clean_pct'], 7)} {fmt(r['median_latency_ms'], 7)} "
+                     f"{r['total_tokens']:>8d} {r['estimated_cost_usd']:>8}")
+    lines.append("")
+    lines.append("Provider refusals (quota, rate limit, auth) are excluded from accuracy and counted in 'answered'.")
+    return "\n".join(lines)
+
+
 def _rate(n: int, d: int) -> Optional[float]:
     return round(100.0 * n / d, 2) if d else None
 
@@ -332,6 +396,8 @@ def metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "declined": sum(1 for r in rs if r.get("declined")),
                 "repaired_and_correct": sum(1 for r in rs if r.get("repairs_requested") and r.get("correct")),
                 "estimated_cost_usd": round(sum(r.get("cost_cents") or 0.0 for r in rs) / 100.0, 4),
+                "total_tokens": sum(int(r.get("total_tokens") or 0) for r in rs),
+                "median_latency_ms": _median([r["latency_ms"] for r in answered if isinstance(r.get("latency_ms"), (int, float))]),
                 # Live runs only: calls the provider refused (quota, rate limit, auth) are not model answers, so the
                 # accuracy over the runs the model actually answered is reported next to the headline figure.
                 "provider_unavailable": sum(1 for r in rs if r.get("provider_unavailable")),

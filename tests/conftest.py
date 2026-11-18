@@ -141,6 +141,11 @@ def _test_starttls(self, *, context=None):
 smtplib.SMTP.starttls = _test_starttls
 
 TEST_DIR = tempfile.mkdtemp(prefix="querysure_test_")
+# api.py loads the repository's .env at import. A developer's real .env (provider keys, model names, a remote
+# DATABASE_URL) must never leak into the suite, so tests run on the environment set here only.
+os.environ["DEEPEVAL_DISABLE_DOTENV"] = "1"   # deepeval also auto-loads .env when a test imports it
+import dotenv  # noqa: E402
+dotenv.load_dotenv = lambda *args, **kwargs: False
 os.environ["ENVIRONMENT"] = "development"
 os.environ["EMAIL_PROVIDER"] = "smtp"
 os.environ["SMTP_HOST"] = "127.0.0.1"
@@ -159,6 +164,12 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
+
+# The evaluation CLI copies LLM keys from the repository .env for `live` runs. In-process tests must not pick up a
+# developer's real keys that way (they would persist in os.environ for every later test); an explicit path still works.
+import evaluation.cli as _eval_cli  # noqa: E402
+_load_repo_llm_env = _eval_cli.load_llm_env_from_dotenv
+_eval_cli.load_llm_env_from_dotenv = lambda path=None: _load_repo_llm_env(path) if path else []
 from fastapi.testclient import TestClient
 
 import api as api_module  # noqa: E402

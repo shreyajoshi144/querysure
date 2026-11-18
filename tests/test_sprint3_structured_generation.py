@@ -128,7 +128,9 @@ def test_success_response_shape_is_unchanged(client, monkeypatch):
     assert set(body) == {"success", "session_id", "sql", "explanation", "confidence", "complexity", "tables_used",
                          "retrieval_confidence", "provider_used", "usage_today",
                          # v1.0.5 additive fields
-                         "plan", "semantic_validation", "verification", "grounded_values"}
+                         "plan", "semantic_validation", "verification", "grounded_values",
+                         # Sprint 2 additive field: id for GET /api/ai/traces/{trace_id}
+                         "trace_id"}
     assert body["confidence"] in {"High", "Medium", "Low"} and body["complexity"] in {"Simple", "Moderate", "Complex"}
     assert set(body["usage_today"]) == {"requests", "estimated_cost_usd", "budget_usd"}
 
