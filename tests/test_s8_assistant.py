@@ -80,7 +80,7 @@ def test_no_relevant_passage_calls_no_model_and_flags_data_questions(client, mon
     off = _say(client, owner, cid, "Who won the football match?").json()["message"]
     assert off["intent"] == "knowledge" and not off["grounded"] and off["sources"] == [] and "No passage" in off["content"]
     data = _say(client, owner, cid, "What is the total revenue by month?").json()["message"]
-    assert data["intent"] == "data_question" and "Ask-data" in data["content"] and data["sources"] == []
+    assert data["intent"] == "data_question" and "Query page" in data["content"] and data["sources"] == []
     # a self-contained data/off-topic question never borrows the previous topic from the history
     FakeModel(monkeypatch, _cited)
     assert _say(client, owner, cid, "Express shipping takes how long?").json()["message"]["grounded"]

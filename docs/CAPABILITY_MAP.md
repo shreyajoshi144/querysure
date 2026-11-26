@@ -1,4 +1,4 @@
-# Capability map (Sprint 0 baseline, updated by Sprint 1)
+# Capability map (Sprint 0 baseline, updated through Sprint 13)
 
 Every item in the two target scopes (Enterprise AI Operations, Connectors & Ingestion), classified against the code at
 tag `v1-querysure` (commit `a47f924`). Status was decided by reading the named files, not from documentation.
@@ -8,7 +8,7 @@ tag `v1-querysure` (commit `a47f924`). Status was decided by reading the named f
 - **Missing**: no implementation.
 - **Broken**: implemented but failing. No item was found broken.
 
-Sprint 1 changes are marked **(S1)**, Sprint 2 changes **(S2)**, Sprint 3 changes **(S3)**, Sprint 4 changes **(S4)**, Sprint 5 changes **(S5)**.
+Sprint 1 changes are marked **(S1)**, Sprint 2 changes **(S2)**, Sprint 3 changes **(S3)**, Sprint 4 changes **(S4)**, Sprint 5 changes **(S5)**, and so on up to **(S13)**. Sprint numbers here are AI Operations Platform sprints.
 
 ## Foundation: tenancy, authorization, audit
 
@@ -27,14 +27,14 @@ Sprint 1 changes are marked **(S1)**, Sprint 2 changes **(S2)**, Sprint 3 change
 | Capability | Status | Evidence / gap |
 |---|---|---|
 | Natural-language understanding for data questions | Working | `modules/query_planner.py`, `modules/sql_generator.py` |
-| Intent classification (data / knowledge / investigation / report / action) | Missing | One intent only: data question → SQL |
+| Intent classification (data / knowledge / investigation / report / action) | Partial **(S8)** | The assistant checks deterministically whether a question is about documents or data and redirects data questions to Query; no model-based intent routing |
 | Structured request interpretation | Partial | Deterministic query plan (measure, grouping, filters, dates, limit) in `query_planner.py`; data questions only |
-| Context-aware follow-ups, conversation history | Missing | A session holds only its latest question; `query_history` is a log, not conversation context |
-| Workspace-aware context | Missing | Workspaces exist **(S1)** but are not yet used as AI context |
+| Context-aware follow-ups, conversation history | Partial **(S8)** | Knowledge assistant: private conversations with follow-up context (`assistant.py`). Query (data questions) still answers one question at a time; `query_history` is a log, not context |
+| Workspace-aware context | Partial **(S7, S9)** | Knowledge search is per workspace; the agent's planning prompt lists the workspace's datasets and documents. Query uses only the selected dataset |
 | Structured outputs | Working | `GenerationOutput` pydantic model; Anthropic tool-forced `emit_sql` (`sql_generator.py`) |
 | Multi-provider support | **Working (S2)** | `ai/providers.py`: Groq, OpenAI, Anthropic, Gemini, xAI. Gemini and xAI are verified against stubs only (no live keys) |
 | Model selection by task | **Working (S2)** | `ai/router.py`, `AI_TASK_ROUTES`; tasks `sql_generation`, `sql_repair` |
-| Traceable tool execution | Partial **(S2)** | Every provider attempt traced in `ai_calls` (`ai/trace.py`), including the structured-output tool forced on a provider; agent tool calls do not exist yet (Sprint 9) |
+| Traceable tool execution | **Working (S2, S9)** | Every provider attempt traced in `ai_calls` (`ai/trace.py`); agent runs and each step's arguments, status and result stored (`agent_steps`) |
 
 ## 2. Data intelligence and text-to-SQL
 
@@ -59,17 +59,17 @@ Sprint 1 changes are marked **(S1)**, Sprint 2 changes **(S2)**, Sprint 3 change
 | Capability | Status | Evidence / gap |
 |---|---|---|
 | TXT / MD / PDF / DOCX ingestion, chunking, search, cited answers, retrieval eval, injection defence | Working **(S7)** | `knowledge.py`, `knowledge_api.py`; retrieval reuses `modules/retrieval_engine` (**S13:** cached inverted `TextIndex`, 25,000-passage cap); `tests/test_s7_knowledge.py` |
-| Conversation history, follow-ups, private chats per user, deterministic intent check (knowledge vs data question) | Working **(S8)** | `assistant.py`, `conversation_api.py`; `tests/test_s8_assistant.py`. Data questions are redirected to Ask-data, not answered by chat |
+| Conversation history, follow-ups, private chats per user, deterministic intent check (knowledge vs data question) | Working **(S8)** | `assistant.py`, `conversation_api.py`; `tests/test_s8_assistant.py`. Data questions are redirected to the Query page, not answered by chat |
 | HTML ingestion, OCR for scanned PDFs, FTS5 / vector search, per-document permissions, re-indexing, document versions | Missing | Not built; no vector store (see ARCHITECTURE: measured recall) |
 
 ## 4. Data quality and anomaly intelligence
 
 | Capability | Status | Evidence / gap |
 |---|---|---|
-| Data profiling | Partial | Column null and distinct counts and samples in `schema_engine.py`; no profiling view or report |
+| Data profiling | **Working (S6)** | `quality.py` profiles every table and column after each import; status on the dataset row, findings in the Runs panel |
 | Missingness and distribution analysis | Partial | Completeness and uniqueness scores on query results (`data_reliability_agent.py`); not run on whole datasets |
 | Unusual value detection | Partial | IQR / z-score outliers on result rows (`business_insight_agent._outlier_detection`) |
-| Schema-change explanations | Missing | No schema versioning before **(S1)** `datasets.schema_version` (column only; not yet incremented) |
+| Schema-change explanations | Partial **(S3, S4)** | Added, removed and type-changed columns detected and audited per run; no AI-written explanation |
 | Statistical anomaly detection on datasets | Partial **(S6)** | `quality.py`: deterministic checks against the previous version and a row-count history; no per-value outlier detection |
 | AI explanations of validation failures | Missing | |
 | Deterministic ingestion validation | Working | `ingestion.py` (ambiguous JSON rejected, Excel header detection, formula cached-value check), `data_normalizer.py` |
@@ -106,7 +106,7 @@ Sprint 1 changes are marked **(S1)**, Sprint 2 changes **(S2)**, Sprint 3 change
 | Latency and error monitoring | Working | `observability/metrics.py`, `slo.py`, `alerts.py` |
 | Gemini, xAI; per-task model config | **Working (S2)** | Off unless key and model are set |
 | Comparable model evaluation | **Working (S2)** | `python -m evaluation.multiformat --live --yes --compare ...`; needs provider credits to produce numbers |
-| General tool calling for agents | Missing | Sprint 9 |
+| General tool calling for agents | **Working (S9)**, closed set by design | Six typed tools in `agent.TOOLS`; no open-ended tool calling, SQL or shell |
 
 ## 9. Safety, governance and evaluation
 

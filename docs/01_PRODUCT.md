@@ -2,7 +2,7 @@
 
 **Ask a question about your own data in plain English. Get the answer, the SQL behind it, and a record of every check it passed or failed.**
 
-Version 1.0.7 · Related: [Architecture](02_ARCHITECTURE.md) · [Evaluation](03_EVALUATION.md) · [Sprint history](SPRINT_HISTORY.md)
+Covers the v1.0.7 Text-to-SQL core and what the AI Operations Platform (Sprints 0–13, merged 2026-11-18 in PR #2) added. Requirements, roadmap and backlog: [project management pack](project/README.md) · Related: [Architecture](02_ARCHITECTURE.md) · [Evaluation](03_EVALUATION.md) · [Sprint history](SPRINT_HISTORY.md)
 
 ## Problem
 
@@ -60,16 +60,17 @@ QuerySure gives the language model **one job: writing SQL**. Grounding, planning
 | Limits | Daily question limits per plan, per-user and global daily AI budgets, storage quotas |
 | Operations | Admin `/ops` dashboard with aggregate metrics only, health and readiness probes, alerts |
 
-## MVP scope
+## Scope
 
-| In scope (v1.0.7) | Out of scope |
+| Out of scope in the v1.0.7 MVP | Status now |
 |---|---|
-| File-based datasets converted to SQLite | Live connections to customer databases |
-| One user per account; team workspaces with roles, a shared dataset catalog and an audit trail (Sprint 1) | Organisations, seats, team billing; querying another member's dataset |
-| Free plan with 10 questions/day; Pro tier defined at $5/month for 50/day | A connected payment provider (only a provider-neutral webhook engine and a generic reference adapter exist; see [BILLING.md](BILLING.md)) |
-| Answering or declining a question | Clarifying questions for ambiguous asks |
-| Background report generation per question | Report download from the main UI |
-| E-mail/password and Google sign-in | MFA |
+| Live connections to customer databases | **Added** (platform Sprints 4–5): PostgreSQL, MySQL, REST and S3 sources, imported read-only into a versioned SQLite file per dataset. Questions never run on the source |
+| Querying another member's dataset | **Added** (platform Sprint 3): datasets belong to the workspace; viewers and above can query them |
+| Organisations, seats, team billing | Still out of scope |
+| A connected payment provider | Still out of scope: only a provider-neutral webhook engine and a generic reference adapter exist ([BILLING.md](BILLING.md)). Free plan: 10 questions/day; Pro defined at $5/month for 50/day |
+| Clarifying questions for ambiguous asks | Still out of scope (backlog B-06) |
+| Report download from the main UI | Still out for per-question reports; investigations export JSON and HTML |
+| MFA | Still out of scope (backlog B-14) |
 
 ## Product decisions
 
@@ -96,8 +97,4 @@ No real users have used the product yet, so these are targets and the instrument
 
 ## Roadmap
 
-1. Run the live benchmark with a provider key and publish accuracy, hallucination rate and cost per question.
-2. Recalibrate the "Low confidence" threshold on live results.
-3. Add a clarification step for ambiguous questions.
-4. Extend independent verification to simple two-table joins.
-5. Connect a real payment provider adapter, tested against its sandbox.
+See [project/02_ROADMAP.md](project/02_ROADMAP.md) and the [product backlog](project/04_PRODUCT_BACKLOG.md).

@@ -9,6 +9,7 @@
 
 | If you care about | Look at | Evidence |
 |---|---|---|
+| **Product and project management** | [Project management pack](docs/project/README.md): charter, PRD, roadmap, milestones, backlog, risk register, QA report, closure report | Requirements traced to tests; risks that actually happened and the response; lessons learned |
 | **Product thinking** | [Product](docs/01_PRODUCT.md), [Capability map](docs/CAPABILITY_MAP.md) | Every capability is classified Working / Partial / Missing against the code, not the plan |
 | **Backend engineering** | `api.py` plus 8 `*_api.py` modules, `workspaces.py`, `ingest.py`, `agent.py`, `investigation.py` | FastAPI, SQLAlchemy 2, 25 Alembic migrations, workspace RBAC (viewer / analyst / admin / owner), append-only audit log |
 | **AI engineering** | `modules/sql_generator.py`, `knowledge.py`, `agent.py`, `ai/` | One job for the model per feature; everything around it is deterministic and tested. Multi-provider routing, budgets reserved before each call, full call trace |
@@ -198,7 +199,7 @@ scripts/launch_rehearsal.sh
 
 `npm ci` is optional; without Node.js, the jsdom XSS and browser tests are skipped. The browser test uses a Linux Chromium build; on macOS or Windows point it at a local Chrome, e.g. `CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`. `tests/test_v108_multiformat_eval.py` needs the owner's evaluation files, which are not in the repository (put them in `tests/fixtures/user/` or set `QUERYSURE_EVAL_DATA`; see [evaluation/README.md](evaluation/README.md)); without them it is skipped.
 
-**Last verified run (Sprint 13, 2026-11-07):** 1,503 passed, 0 failed, 46 skipped on SQLite; 1,536 passed, 0 failed, 14 skipped against real PostgreSQL 16 with PostgreSQL and MySQL 8.4 as data sources (Python 3.12, macOS); the two browser tests were not re-run this sprint (no UI change; last run 2 of 2). Alembic upgrade, check, downgrade and upgrade ran clean on PostgreSQL, Ruff is clean, and `scripts/launch_rehearsal.sh` passed. The offline SQL benchmark reproduced 62/62 in `oracle` mode (a harness self-check, not a model score). See [docs/03_EVALUATION.md](docs/03_EVALUATION.md).
+**Last verified run (2026-11-25, `main` after PR #2, Python 3.12, macOS):** 1,504 passed, 0 failed, 47 skipped on SQLite; 1,520 passed, 0 failed, 32 skipped (MySQL-source tests skipped: no MySQL server in this run) against a real PostgreSQL 16; browser end-to-end 94/94 on source and minified assets; Alembic upgrade, check, downgrade and upgrade clean on PostgreSQL; Ruff and `pip-audit` clean; safety suite 36/36. `scripts/launch_rehearsal.sh` last passed on 2026-11-07. The offline SQL benchmark reproduces 62/62 in `oracle` mode (a harness self-check, not a model score). Full report: [docs/project/06_TEST_QA_REPORT.md](docs/project/06_TEST_QA_REPORT.md).
 
 ## Packaging a release
 
@@ -214,10 +215,10 @@ It decides what ships itself (independently of `.gitignore`), writes one `querys
 
 What is **not** proven, stated up front:
 
-- **Live-model quality is only partly measured, and is well below 99%.** On the multi-format SQL suite, Groq `gpt-oss-120b` got 57.5% (tuned) and 60.9% (held-out) of questions exactly right, and about 63% on the Stats NZ CSV after the hierarchy fix ([details](docs/03_EVALUATION.md#31-multi-format-evaluation-2026-10-24)); most calls were refused by the free-tier quota. **Agent-plan quality and cited-answer quality with a real model have not been measured at all.** The tooling exists (`scripts/live_quality.sh`, `python -m evaluation.platform --suite answers --mode live`) but needs a funded key; the offline numbers above test the code around the model, not the model.
+- **Live-model quality is only partly measured, and is below the 70% release target (the long-term goal is 99%).** On the multi-format SQL suite, Groq `gpt-oss-120b` got 57.5% (tuned) and 60.9% (held-out) of questions exactly right, and about 63% on the Stats NZ CSV after the hierarchy fix ([details](docs/03_EVALUATION.md#31-multi-format-evaluation-2026-10-24)); most calls were refused by the free-tier quota. **Agent-plan quality and cited-answer quality with a real model have not been measured at all.** The tooling exists (`scripts/live_quality.sh`, `python -m evaluation.platform --suite answers --mode live`) but needs a funded key; the offline numbers above test the code around the model, not the model.
 - **Retrieval is lexical.** Paraphrased questions miss about 28% of the time (recall@3 0.72). A vector index was measured against a rule fixed in advance and is not justified yet; it would be reconsidered if live results show paraphrase misses dominate.
 - **Citations are checked for existence, not factual support.** An answer can cite a real passage and still be wrong.
-- **Deployment is rehearsed, not operated.** The production-mode rehearsal passes on one machine ([checklist section 7](docs/LAUNCH_CHECKLIST.md)); there has been no cloud deployment, no real mail delivery check, no PostgreSQL or concurrent-load benchmark.
+- **Deployment is rehearsed and demoed, not operated at scale.** The production-mode rehearsal passes on one machine ([checklist section 7](docs/LAUNCH_CHECKLIST.md)), and a Render free-plan demo runs in demo mode. Paid production hosting, real mail deliverability (mail from a free-mail sender lands in spam) and a cloud load test are not done.
 - Capacity limits: 25,000 passages per workspace (about 285 MB of index per active workspace), 500,000 rows per table for investigations.
 - Independent recalculation covers single-table questions only, so most multi-table answers show "not independently verified". No clarifying questions for ambiguous requests.
 - **Billing is not connected to a payment provider.** Only a provider-neutral webhook engine and a generic reference adapter exist ([docs/BILLING.md](docs/BILLING.md)).
@@ -229,10 +230,11 @@ What is **not** proven, stated up front:
 | Document | Contents |
 |---|---|
 | [Index](docs/README.md) · [User guide](docs/USER_GUIDE.md) · [Developer guide](docs/DEVELOPMENT.md) · [Design decisions](docs/DECISIONS.md) | Start here, by role |
-| [Product](docs/01_PRODUCT.md) | Problem, users, journey, features, MVP scope, product decisions |
+| [Product](docs/01_PRODUCT.md) | Problem, users, journey, features, scope, product decisions |
 | [Architecture](docs/02_ARCHITECTURE.md) | Components, NL-to-SQL workflow, data flow, database, APIs, security, deployment |
 | [Evaluation](docs/03_EVALUATION.md) | Test results, AI evaluation method and findings, security checks, limitations |
-| [Sprint history](docs/SPRINT_HISTORY.md) | Thirteen-sprint record with acceptance criteria and evidence |
+| [Project management pack](docs/project/README.md) | Charter, PRD, roadmap, milestones, backlog, risk register, QA report, closure report |
+| [Sprint history](docs/SPRINT_HISTORY.md) | MVP Sprints 1–7 and platform Sprints 0–13, with acceptance criteria and evidence |
 | [API reference](docs/API.md) | Every route (checked against the code by a test) |
 | [Environment variables](docs/ENVIRONMENT.md) | Every setting (checked against the code by a test) |
 | [Capability map](docs/CAPABILITY_MAP.md) | Every capability classified against the code, with evidence |

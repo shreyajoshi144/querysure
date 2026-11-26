@@ -1,6 +1,10 @@
 # QuerySure — Evaluation
 
-What has been measured, how, and what has not. Results are grouped by where they come from:
+What has been measured, how, and what has not.
+
+> **Current results (re-run 2026-11-25 on `main` after PR #2):** 1,504 passed, 0 failed, 47 skipped on SQLite; 1,520 passed, 0 failed, 32 skipped (MySQL-source tests skipped: no MySQL server in this run) on PostgreSQL 16; browser end-to-end 94/94; safety suite 36/36; Ruff and `pip-audit` clean. Summary and defect list: [project/06_TEST_QA_REPORT.md](project/06_TEST_QA_REPORT.md). Sections 1–5 below are the detailed record of the v1.0.7 review (2026-10-23/24) and later runs; their dates are given where they appear.
+
+Results are grouped by where they come from:
 
 - **Verified in this review**: re-run on 2026-10-23 and 2026-10-24 on macOS with Python 3.12 (fresh virtualenv, `requirements.txt` + `requirements-dev.txt`), SQLite, without the Node.js test dependencies. **The pytest suite ran on SQLite, without a PostgreSQL server. The owner's Docker Compose stack (PostgreSQL 16, Redis, worker, API on port 5001) was exercised by hand on 2026-10-24 (section 3.2). A live LLM was called only for section 3.1's partial runs and section 3.2's questions.**
 - **Recorded earlier**: results written down in this repository by earlier sprints and not reproduced in this review. They are labelled where they appear.
@@ -113,7 +117,7 @@ Each case has an English question plus up to seven variants (Spanish, French, Ge
 | Clean | 76.25% → **97.5%** | 65.22% → **100%** |
 | False alarms on correct answers | 8.75% → **0%** | 13.04% → **0%** |
 
-**The 99% target is not met with a live model.** Measured live accuracy on answered questions is 57.5% (tuned) and 60.9% (held-out) exact, and 65% / 69.6% semantic. The remaining 35 wrong answers are the model's SQL, which the pipeline now accepts and runs:
+**Neither the 70% release target nor the 99% long-term goal is met with a live model.** Measured live accuracy on answered questions is 57.5% (tuned) and 60.9% (held-out) exact, and 65% / 69.6% semantic. The remaining 35 wrong answers are the model's SQL, which the pipeline now accepts and runs:
 
 | Cause | Runs | Example |
 |---|---:|---|
@@ -227,10 +231,10 @@ Recorded in Sprint 4 with `loadtests/` (raw data in `loadtests/results/*.json`) 
 
 | Area | Limitation |
 |---|---|
-| AI accuracy | Live accuracy measured only on partial runs (about 60% exact on answered questions across formats, section 3.1; about 63% on the Stats NZ CSV after the section 3.3 fix); the 99% target is not met. The free Groq quota blocks a full run. The 62-case benchmark is one 5-table database with gold SQL written by the author, and the Low-confidence cutoff was tuned on it. Expected answers in the multi-format suite were written by the author from the raw files; no second reviewer checked them |
+| AI accuracy | Live accuracy measured only on partial runs (57.5% tuned and 60.9% held-out exact on answered questions across formats, section 3.1; about 63% on the Stats NZ CSV after the section 3.3 fix); neither the 70% release target nor the 99% long-term goal is met. The free Groq quota blocks a full run. The 62-case benchmark is one 5-table database with gold SQL written by the author, and the Low-confidence cutoff was tuned on it. Expected answers in the multi-format suite were written by the author from the raw files; no second reviewer checked them |
 | Verification | Independent recalculation covers single-table plans only, so most multi-table answers (including "most orders per store region") are "not independently verified" |
-| Tests not run here | PostgreSQL-only pytest tests and Node/browser tests. The Docker stack was exercised by hand (section 3.2), not by an automated test |
-| Deployment | Not deployed in this review. `render.yaml` uses free plans for web, PostgreSQL (deleted after 30 days) and Key Value (not persistent) |
+| Tests | In the v1.0.7 review the PostgreSQL-only and browser tests did not run; both ran on 2026-11-25 (see the banner at the top). The Docker stack is exercised by `scripts/launch_rehearsal.sh`, not by CI |
+| Deployment | A Render free-plan demo runs in demo mode (PR #1). Free PostgreSQL expires after 30 days (it expired on 2026-11-25 and was replaced), free Key Value is not persistent, and the free web service sleeps when idle. Paid plans are needed before real users |
 | Providers | Model IDs drift; defaults were checked against provider documentation, not a live call. The circuit breaker is per process |
 | Security | Token in `localStorage`; account-existence disclosure on registration; no MFA; uploaded SQLite opened without `trusted_schema=OFF` |
 | Billing | No real payment provider adapter; the Pro plan cannot be sold as shipped |

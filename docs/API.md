@@ -195,7 +195,7 @@ Chats are private to their creator (anyone else, including a workspace owner, ge
 | GET | `/api/conversations/{conversation_id}` | user | The conversation and its messages (answers keep their cited sources). |
 | PATCH | `/api/conversations/{conversation_id}` | user | Rename (`{title}`). |
 | DELETE | `/api/conversations/{conversation_id}` | user | Delete the conversation and its messages. |
-| POST | `/api/conversations/{conversation_id}/messages` | user | Send `{question}`; returns the stored user and assistant messages. Answers come from the workspace's documents with validated citations and follow-up context; no relevant passage means no model call (`intent: data_question` points to Ask-data). 409 `CONVERSATION_FULL` at the message cap. Shared AI budget. |
+| POST | `/api/conversations/{conversation_id}/messages` | user | Send `{question}`; returns the stored user and assistant messages. Answers come from the workspace's documents with validated citations and follow-up context; no relevant passage means no model call (`intent: data_question` points to the Query page). 409 `CONVERSATION_FULL` at the message cap. Shared AI budget. |
 
 ### Data quality (Sprint 6)
 
