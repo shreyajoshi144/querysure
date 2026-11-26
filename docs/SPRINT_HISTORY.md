@@ -1,6 +1,6 @@
 # QuerySure — Sprint History (Retrospective Reconstruction)
 
-> **This is a retrospective reconstruction, not a set of historical Jira records.** QuerySure was not tracked in Jira, and the repository has no Git history. The seven sprints below were rebuilt from evidence inside the repository: "Sprint N" comments in code and tests, release-numbered test files (`test_v103_*` … `test_v107_*`), the Alembic migration chain and `CHANGELOG.md`. Story IDs such as `S3-02` are local labels for this document, **not Jira keys**. No story points, velocity, assignees or sprint dates are given, because none are recorded.
+> **This is a retrospective reconstruction, not a set of historical Jira records.** QuerySure was not tracked in Jira, and the Git history starts with the public release on 2026-07-01, so it does not show individual sprints. The seven MVP sprints below were rebuilt from evidence inside the repository: "Sprint N" comments in code and tests, release-numbered test files (`test_v103_*` … `test_v107_*`), the Alembic migration chain and `CHANGELOG.md`. Story IDs such as `S3-02` are local labels for this document, **not Jira keys**. No story points, velocity, assignees or sprint dates are given, because none are recorded. The AI Operations Platform sprints (0–13) further down were written as they were delivered. The current open work is in [project/04_PRODUCT_BACKLOG.md](project/04_PRODUCT_BACKLOG.md).
 
 Related: [Product](01_PRODUCT.md) · [Architecture](02_ARCHITECTURE.md) · [Evaluation](03_EVALUATION.md)
 
@@ -278,7 +278,9 @@ adds the tenancy layer every later capability depends on.
 | S7-04 | Isolation and deletion | Roles, 404 for non-members, delete removes passages, workspace / account cleanup | tests | Done |
 | S7-05 | UI | Knowledge card: upload, list, delete, ask, search | `static/js/app.js` | Done |
 
-## Open backlog
+## Open backlog (as of Sprint 7)
+
+Superseded by the current [product backlog](project/04_PRODUCT_BACKLOG.md), which keeps these IDs (the two-table verification part of B-06 is now B-10).
 
 | ID | Item | Type |
 |---|---|---|

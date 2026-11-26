@@ -4,6 +4,16 @@ Notable product, reliability, security, and engineering changes for QuerySure ar
 
 ## Unreleased
 
+### Project management documentation (2026-11-25)
+- `docs/project/`: project charter, PRD, roadmap, milestones, product backlog, risk register, test and QA report, project closure report.
+- Existing docs brought in line with each other: current test results (re-run 2026-11-25), 25 migrations, deployment status, one set of live-accuracy figures and targets (70% release target, 99% long-term goal), stale capability-map rows updated.
+- The assistant now points data questions to the Query page (its message still named the old Ask-data panel).
+
+### Journey redesign and pre-merge audit (PR #2, 2026-11-18)
+- Horizontal navigation that follows the user journey: Overview → Connect → Explore → Investigate → Analyze → Query → Knowledge, with a "How it works" flowchart on each page. Query shows results first and folds the workflow after a run; Team and Evaluation moved to the user menu.
+- Fixed in a browser walkthrough of every page: the agent's prompt now states each argument's allowed range (every plan had been rejected); analyses can't start without a dataset; errors when adding a team member are shown.
+- Audit: dead code and unused imports removed; tests never read the developer's `.env`; the browser end-to-end test runs on macOS with `CHROME_PATH`.
+
 ### Retrieval scale, quality measurement and deployment rehearsal (Sprint 13)
 - **Search no longer rescans every passage per question.** `modules/retrieval_engine.TextIndex` (TF-IDF with an inverted index; scores identical to scoring every text, proven by a test) is cached per workspace in `knowledge.py` and rebuilt when the workspace's document set changes (also when another worker changed it). Questions after the first take under 2 ms at 25,000 passages; the one-off build is about 4 s. `KNOWLEDGE_SEARCH_MAX_CHUNKS` default 10,000 -> 25,000; new `KNOWLEDGE_INDEX_CACHE_WORKSPACES` (4). Memory is stated in `docs/baseline/performance.txt`; `render.yaml` sets 5,000 for the 512 MB free plan.
 - **Production-mode rehearsal:** `scripts/launch_rehearsal.sh` builds the image and runs the compose services with `ENVIRONMENT=production` (production guards, `alembic upgrade head` on boot, MinIO storage) in an isolated project, runs `scripts/launch_smoke.py` against the API, takes a backup, restores it into a scratch database and verifies it, restarts the services and removes everything it created. Last run passed (see `docs/LAUNCH_CHECKLIST.md` section 7).

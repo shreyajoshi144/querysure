@@ -9,5 +9,6 @@
 | Call the API | [API.md](API.md) |
 | See the evidence | [03_EVALUATION.md](03_EVALUATION.md), [baseline/](baseline/), [../evaluation/README.md](../evaluation/README.md) |
 | Deploy and operate | [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md), [OPERATIONS.md](OPERATIONS.md), [BILLING.md](BILLING.md) |
+| See how it was planned and managed | [project/](project/README.md): charter, PRD, roadmap, milestones, backlog, risk register, QA report, closure report |
 | See how it was built | [SPRINT_HISTORY.md](SPRINT_HISTORY.md), [../CHANGELOG.md](../CHANGELOG.md) |
 | Report a vulnerability | [../SECURITY.md](../SECURITY.md) |

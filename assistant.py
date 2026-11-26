@@ -17,7 +17,7 @@ _DATA_HINT = re.compile(
     r"\b(how many|number of|count of|total|sum of|average|avg|median|per (?:day|week|month|quarter|year)|top \d+|highest|lowest|"
     r"trend|group(?:ed)? by|rows?|columns?|revenue by|sales by)\b", re.I)
 DATA_NOTE = ("This looks like a question about table data. The assistant answers from your uploaded documents only; "
-             "ask data questions from the Ask-data panel on a dataset, where they are answered with SQL.")
+             "ask data questions on the Query page, where they are answered with SQL.")
 
 
 def classify(question: str) -> str:
